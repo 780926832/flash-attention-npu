@@ -457,10 +457,8 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
     tiling_cpu_ptr->set_scaleValue(softmax_scale);
     tiling_cpu_ptr->set_maxQSeqlen(seqlen_q);
     int32_t max_kv_seqlen = 0;
-    int32_t min_kv_seqlen = std::numeric_limits<int32_t>::max();
     for (int32_t i = 0; i < batch_size; i++) {
         max_kv_seqlen = std::max(max_kv_seqlen, seqlens_k_cpu[i]);
-        min_kv_seqlen = std::min(min_kv_seqlen, seqlens_k_cpu[i]);
     }
     tiling_cpu_ptr->set_maxKvSeqlen(static_cast<uint32_t>(max_kv_seqlen));
 
@@ -484,12 +482,12 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
 
     uint32_t numTasks = static_cast<uint32_t>(batch_size * num_heads_k);
     bool isLongSeq = (static_cast<double>(numTasks) <= 0.8 * blockDim) &&
-        (min_kv_seqlen >= static_cast<int32_t>(blockDim) * 512);
+        (max_kv_seqlen >= static_cast<int32_t>(blockDim) * 512);
     bool isShortSeq = (static_cast<double>(numTasks) <= 0.4 * blockDim) &&
-        (min_kv_seqlen >= 1024);
+        (max_kv_seqlen >= 1024);
     bool flashDecodeFlag = paged_KV &&
         (seqlen_q * groupSize <= 128) && (seqlen_q <= 16) &&
-        (seqlen_q > 0) && (isLongSeq || isShortSeq);
+        (max_kv_seqlen >= 1024) && (seqlen_q > 0) && (isLongSeq || isShortSeq);
 
     SplitContext splitCtx;
     splitCtx.batch_size = batch_size;
@@ -565,7 +563,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
         if (paged_KV) {
             if (is_causal) {
                 if (flashDecodeFlag) {
-                    SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::NONE, true><<<launchBlockDim, nullptr, aclStream>>>(
+                    SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::OUT_ONLY, true><<<launchBlockDim, nullptr, aclStream>>>(
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                 } else {
@@ -575,7 +573,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                 }
             } else {
                 if (flashDecodeFlag) {
-                    SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::NONE, true><<<launchBlockDim, nullptr, aclStream>>>(
+                    SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::OUT_ONLY, true><<<launchBlockDim, nullptr, aclStream>>>(
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                 } else {
@@ -599,7 +597,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
         if (paged_KV) {
             if (is_causal) {
                 if (flashDecodeFlag) {
-                    SplitFuse::FAInfer<half, half, float, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::NONE, true><<<launchBlockDim, nullptr, aclStream>>>(
+                    SplitFuse::FAInfer<half, half, float, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::OUT_ONLY, true><<<launchBlockDim, nullptr, aclStream>>>(
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                 } else {
@@ -609,7 +607,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                 }
             } else {
                 if (flashDecodeFlag) {
-                    SplitFuse::FAInfer<half, half, float, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::NONE, true><<<launchBlockDim, nullptr, aclStream>>>(
+                    SplitFuse::FAInfer<half, half, float, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::BSND, Catlass::Epilogue::LseModeT::OUT_ONLY, true><<<launchBlockDim, nullptr, aclStream>>>(
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                 } else {

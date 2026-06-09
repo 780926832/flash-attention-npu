@@ -417,7 +417,9 @@ namespace SplitFuse {
                     gO,
                     gActualQseqlen,
                     INPUT_LAYOUT == FaiKenel::inputLayout::TND,
-                    maxQSeqlen
+                    maxQSeqlen,
+                    (LSE_MODE == Epilogue::LseModeT::OUT_ONLY),
+                    gLse
                 );
 #endif
             }

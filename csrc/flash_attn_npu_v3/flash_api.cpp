@@ -554,7 +554,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
 
     int64_t maxQSeqlenCalc = 0;
     int64_t minQSeqlenCalc = std::numeric_limits<int64_t>::max();
-    int64_t minKVSeqlenCalc = std::numeric_limits<int64_t>::max();
+    int64_t maxKVSeqlenCalc = 0;
     for (int32_t batchIdx = 0; batchIdx < batch_size; batchIdx++) {
         int64_t qSeqlenVal = seqlen_q;
         int64_t kvSeqlenVal = *(seqlens_k_cpu + batchIdx);
@@ -566,16 +566,16 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
         }
         maxQSeqlenCalc = std::max(maxQSeqlenCalc, qSeqlenVal);
         minQSeqlenCalc = std::min(minQSeqlenCalc, qSeqlenVal);
-        minKVSeqlenCalc = std::min(minKVSeqlenCalc, kvSeqlenVal);
+        maxKVSeqlenCalc = std::max(maxKVSeqlenCalc, kvSeqlenVal);
     }
     uint32_t numTasks = static_cast<uint32_t>(batch_size * num_heads_k);
     bool isLongSeq = (static_cast<double>(numTasks) <= 0.8 * blockDim) &&
-        (minKVSeqlenCalc >= static_cast<int64_t>(blockDim) * 512);
+        (maxKVSeqlenCalc >= static_cast<int64_t>(blockDim) * 512);
     bool isShortSeq = (static_cast<double>(numTasks) <= 0.4 * blockDim) &&
-        (minKVSeqlenCalc >= 1024);
+        (maxKVSeqlenCalc >= 1024);
     bool flashDecodeFlag = paged_KV && is_varlen_q &&
         (maxQSeqlenCalc * groupSize <= 128) && (maxQSeqlenCalc <= 16) &&
-        (minQSeqlenCalc > 0) && (isLongSeq || isShortSeq);
+        (maxKVSeqlenCalc >= 1024) && (minQSeqlenCalc > 0) && (isLongSeq || isShortSeq);
 
     SplitContext splitCtx;
     splitCtx.batch_size = batch_size;
@@ -667,7 +667,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
     printf("[flash_api] dtype=%s paged_KV=%d is_causal=%d is_varlen_q=%d "
     "is_varlen_kv=%d flashDecodeFlag=%d launchBlockDim=%u blockDim=%u "
     "batch_size=%d seqlen_q=%d num_heads=%d num_heads_k=%d head_size=%d "
-    "maxQ=%ld minQ=%ld minKV=%ld isLongSeq=%d isShortSeq=%d\n",
+    "maxQ=%ld minQ=%ld maxKV=%ld isLongSeq=%d isShortSeq=%d\n",
     is_bf16 ? "bf16" : "fp16",
     static_cast<int>(paged_KV),
     static_cast<int>(is_causal),
@@ -683,7 +683,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
     head_size_og,
     maxQSeqlenCalc,
     minQSeqlenCalc,
-    minKVSeqlenCalc,
+    maxKVSeqlenCalc,
     static_cast<int>(isLongSeq),
     static_cast<int>(isShortSeq));
     if (is_bf16) {
@@ -691,7 +691,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
             if (is_causal) {
                 if (is_varlen_q) {
                     if (flashDecodeFlag) {
-                        SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::NONE><<<launchBlockDim, nullptr, aclStream>>>(
+                        SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::OUT_ONLY><<<launchBlockDim, nullptr, aclStream>>>(
                                             fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                                             qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                     } else {
@@ -707,7 +707,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
             } else {
                 if (is_varlen_q) { 
                     if (flashDecodeFlag) {
-                        SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::NONE><<<launchBlockDim, nullptr, aclStream>>>(
+                        SplitFuse::FAInfer<bfloat16_t, bfloat16_t, float, true, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::OUT_ONLY><<<launchBlockDim, nullptr, aclStream>>>(
                             fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                             qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                     } else {
@@ -749,7 +749,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
             if (is_causal) {
                 if (is_varlen_q) { 
                     if (flashDecodeFlag) {
-                        SplitFuse::FAInfer<half, half, float, true, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::NONE><<<launchBlockDim, nullptr, aclStream>>>(
+                        SplitFuse::FAInfer<half, half, float, true, true, FaiKenel::MaskType::MASK_CAUSAL, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::OUT_ONLY><<<launchBlockDim, nullptr, aclStream>>>(
                             fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                             qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                     } else {
@@ -765,7 +765,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
             } else {
                 if (is_varlen_q) { 
                     if (flashDecodeFlag) {
-                        SplitFuse::FAInfer<half, half, float, true, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::NONE><<<launchBlockDim, nullptr, aclStream>>>(
+                        SplitFuse::FAInfer<half, half, float, true, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::TND, Catlass::Epilogue::LseModeT::OUT_ONLY><<<launchBlockDim, nullptr, aclStream>>>(
                             fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, softmaxLseDevice,
                             qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
                     } else {

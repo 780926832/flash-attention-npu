@@ -33,6 +33,7 @@ public:
     // Placeholder constants matching original logic
     static constexpr uint32_t STAGE2_UB_UINT8_BLOCK_SIZE = 6144; // 24 * 64 * 4
     static constexpr uint32_t UB_UINT8_LINE_SIZE = 32768; // 1 * 64 * 128 * 4
+    static constexpr uint32_t FLOAT_PER_BLOCK = 8;
 
     __aicore__ inline 
     CombineScale() {}
@@ -81,13 +82,13 @@ public:
         AscendC::GlobalTensor<ElementLse> oCoreTmpGmTensor,
         AscendC::GlobalTensor<ElementOutput> oGmTensor,
         AscendC::GlobalTensor<int32_t> gActualQseqlen,
-        bool inputLayoutTND = true
+        bool inputLayoutTND = true,
+        bool outputLse = false,
+        AscendC::GlobalTensor<ElementLse> oLseGmTensor = AscendC::GlobalTensor<ElementLse>()
     ) {
         AscendC::SetAtomicNone();
         AscendC::SetMaskNorm();
         AscendC::SetVectorMask<int8_t>((uint64_t)-1, (uint64_t)-1);
-
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
 
         int64_t vectorsubBlockNum = AscendC::GetSubBlockNum();
         int64_t vectorsubBlockID = AscendC::GetSubBlockIdx();
@@ -129,6 +130,9 @@ public:
 
             uint32_t splitNumAlign = (splitNum + 7) / 8 * 8;  // 32b align
             uint32_t lseBlock = vectorsubBlockID == 0 ? sum_former : sum - sum_former;
+            if (lseBlock == 0) {
+                continue;
+            }
             uint32_t lseBlockAlign = (lseBlock + 7) / 8 * 8;  // 32b align
             int32_t count = splitNum * lseBlockAlign;
             int32_t lnCount = 1 * lseBlockAlign;
@@ -143,7 +147,6 @@ public:
             AscendC::Duplicate(tlUbTensor, 0.0f, calcLen);
 
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
             
             // Copy LSE from GM to UB
@@ -186,6 +189,49 @@ public:
             AscendC::Add(tsUbTensor, rsUbTensor, lmUbTensor, lnCount);
             AscendC::PipeBarrier<PIPE_V>();
 
+            if (outputLse) {
+                uint32_t baseGmOffsetLse =
+                    prevQSeqlenSum * qHeads + qStartIndx * qHeads + headStartIndx;
+                uint32_t gmLseScalar = 0;
+                if (q_len == 1) {
+                    gmLseScalar = (vectorsubBlockID == 0) ? baseGmOffsetLse
+                                                          : baseGmOffsetLse + sum_former;
+                } else {
+                    uint32_t q_half = q_len / 2;
+                    gmLseScalar = (vectorsubBlockID == 0) ? baseGmOffsetLse
+                                                          : baseGmOffsetLse + q_half * qHeads;
+                }
+
+                if (q_len == 1) {
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID3);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID3);
+
+                    AscendC::DataCopyPad(
+                        oLseGmTensor[gmLseScalar], tsUbTensor,
+                        AscendC::DataCopyExtParams(1, lseBlock * sizeof(float), 0, 0, 0));
+                } else {
+                    AscendC::Brcb(loFloatUbTensor.ReinterpretCast<uint32_t>(),
+                                  tsUbTensor.ReinterpretCast<uint32_t>(),
+                                  (lseBlockAlign + FLOAT_PER_BLOCK - 1) / FLOAT_PER_BLOCK,
+                                  AscendC::BrcbRepeatParams(1, 8));
+                    AscendC::PipeBarrier<PIPE_V>();
+
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID3);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID3);
+
+                    uint32_t qTile = lseBlock / n_len;
+                    for (uint32_t qi = 0; qi < qTile; ++qi) {
+                        AscendC::DataCopyPad(
+                            oLseGmTensor[gmLseScalar + qi * qHeads],
+                            loFloatUbTensor[qi * n_len * FLOAT_PER_BLOCK],
+                            AscendC::DataCopyExtParams(n_len, sizeof(float), 0, 0, 0));
+                    }
+                }
+
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID3);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID3);
+            }
+
             // Broadcast scale
             AscendC::BroadCast<float, 2, 0>(broadCastScaleTensor, tsUbTensor, dstShapeBroadcast, srcShapeBroadcast, tempReduceSum);
             AscendC::PipeBarrier<PIPE_V>();
@@ -200,6 +246,7 @@ public:
             if (q_len > 1 && tokenTile >= n_len && n_len % 8 == 0) {
                 tokenTile = (tokenTile / n_len) * n_len;
             }
+            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
 
             for (uint32_t tileStart = 0; tileStart < lseBlock; tileStart += tokenTile) {
                 uint32_t curTile = (tileStart + tokenTile <= lseBlock) ?
@@ -215,6 +262,7 @@ public:
                 uint32_t blockLenWriteAligned = (blockLenWrite + 31) / 32 * 32;
                 uint32_t srcStrideWrite = (headSizeVPad * sizeof(ElementOutput) - blockLenWriteAligned) / 32;
 
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
                 AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
                 for (uint32_t nIdx = 0; nIdx < splitNum; nIdx++) {
                     AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
@@ -290,12 +338,9 @@ public:
                     }
                 }
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                if (tileStart + tokenTile < lseBlock) {
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
-                }
             }
+            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
         }
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
     }
 
 private:
