@@ -938,7 +938,27 @@ mha_varlen_fwd(at::Tensor &q,  // total_q x num_heads x head_size, total_q := \s
     tiling_cpu_ptr->set_UpdateSize(UpdateSize);
     tiling_cpu_ptr->set_workSpaceSize(workSpaceSize);
 
-    uint32_t totalTaskNum = 0; // 核内计算
+    at::Tensor cu_seqlens_q_cpu_tensor = cu_seqlens_q.to(at::Device(at::kCPU));
+    at::Tensor cu_seqlens_k_cpu_tensor = cu_seqlens_k.to(at::Device(at::kCPU));
+    int32_t* cu_seqlens_q_cpu = static_cast<int32_t *>(cu_seqlens_q_cpu_tensor.data_ptr());
+    int32_t* cu_seqlens_k_cpu = static_cast<int32_t *>(cu_seqlens_k_cpu_tensor.data_ptr());
+
+    uint32_t totalTaskNum = 0;
+    uint32_t groupSize = num_heads / num_heads_k;
+    for (int32_t batchIdx = 0; batchIdx < batch_size; batchIdx++) {
+        uint64_t qSeqlen = static_cast<uint64_t>(cu_seqlens_q_cpu[batchIdx + 1] - cu_seqlens_q_cpu[batchIdx]);
+        uint64_t kvSeqlen = static_cast<uint64_t>(cu_seqlens_k_cpu[batchIdx + 1] - cu_seqlens_k_cpu[batchIdx]);
+        uint64_t curQNBlockTile = GetQNBlockTile(qSeqlen, groupSize);
+        uint64_t qNBlockNumPerGroup = (groupSize + curQNBlockTile - 1) / curQNBlockTile;
+        uint64_t curQNBlockNum = qNBlockNumPerGroup * num_heads_k;
+        uint64_t curQSBlockTile = GetQSBlockTile(kvSeqlen);
+        uint64_t curQSBlockNum = (qSeqlen + curQSBlockTile - 1) / curQSBlockTile;
+        uint64_t curTaskNum = curQNBlockNum * curQSBlockNum;
+        if (batchIdx == 0) {
+            tiling_cpu_ptr->set_firstBatchTaskNum(curTaskNum);
+        }
+        totalTaskNum += curTaskNum;
+    }
     tiling_cpu_ptr->set_totalTaskNum(totalTaskNum);
     at::Tensor tiling_gpu_tensor = tiling_cpu_tensor.to(at::Device(at::kPrivateUse1)); // Tiling to Device
     
