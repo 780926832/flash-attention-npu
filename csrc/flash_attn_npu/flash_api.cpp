@@ -487,7 +487,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
         (min_kv_seqlen >= static_cast<int32_t>(blockDim) * 512);
     bool isShortSeq = (static_cast<double>(numTasks) <= 0.4 * blockDim) &&
         (min_kv_seqlen >= 1024);
-    bool flashDecodeFlag = paged_KV && (head_size_og <= 128) &&
+    bool flashDecodeFlag = paged_KV &&
         (seqlen_q * groupSize <= 128) && (seqlen_q <= 16) &&
         (seqlen_q > 0) && (isLongSeq || isShortSeq);
 

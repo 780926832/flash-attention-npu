@@ -573,7 +573,7 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
         (minKVSeqlenCalc >= static_cast<int64_t>(blockDim) * 512);
     bool isShortSeq = (static_cast<double>(numTasks) <= 0.4 * blockDim) &&
         (minKVSeqlenCalc >= 1024);
-    bool flashDecodeFlag = paged_KV && is_varlen_q && (head_size_og <= 128) &&
+    bool flashDecodeFlag = paged_KV && is_varlen_q &&
         (maxQSeqlenCalc * groupSize <= 128) && (maxQSeqlenCalc <= 16) &&
         (minQSeqlenCalc > 0) && (isLongSeq || isShortSeq);
 
