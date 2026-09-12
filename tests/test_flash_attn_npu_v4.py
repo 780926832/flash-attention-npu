@@ -298,6 +298,11 @@ test_cases = [
     (torch.float16, 1, 10, 2, 3, 4096, 192, 1, 128, False, "TND", False, -1, -1, 3),
     # Non-16-aligned head dim exercises packed Partial O DMA.
     (torch.float16, 1, 6, 1, 3, 4096, 59, 1, 128, False, "TND", False, -1, -1, 4),
+    # Reported paged-TND regressions: split-KV with large/unaligned D and
+    # causal variable lengths. Keep these in the common suite, including 910.
+    (torch.bfloat16, 2, 16, 4, 129, 513, 201, 1, 128, False, "TND", True, -1, -1, 2),
+    (torch.float16, 2, 24, 2, 129, 513, 224, 1, 128, False, "TND", True, -1, -1, 2),
+    (torch.bfloat16, 5, 24, 4, 128, 129, 63, 1, 128, True, "TND", True, -1, -1, 1),
     # Maximum merged-M tile: q_seqlen=16 * 8 Q heads = 128 rows.
     (torch.bfloat16, 1, 8, 1, 16, 4096, 64, 1, 128, False, "TND", False, -1, -1, 4),
     # Auto-split FD with Q-head merging and causal masking.
