@@ -215,16 +215,12 @@ test_cases = [
     (torch.float16, 2, 6, 3, 3, 799, 59, 1, 128, False, "TND", True, 460, 62, 1),
     (torch.float16, 2, 6, 1, 1, 128, 80, 1, 128, False, "TND", True, -1, -1, 1),
     (torch.float16, 2, 6, 3, 3, 1024, 32, 1, 128, False, "TND", True, 0, 256, 1),
-    # Known unresolved issue: kv=20000 + window=(0,256) + paged TND triggers
-    # kernel NaNs (formerly data_type101/103). Trigger: non-causal,
-    # window_left=0, and long KV (kv around 19980). Middle output rows become
-    # NaN while LSE remains valid. Temporarily disabled pending kernel analysis.
-    # (torch.float16, 2, 6, 6, 16, 20000, 59, 1, 128, False, "TND", True, 0, 256, 1),
+    (torch.float16, 2, 6, 6, 16, 20000, 59, 1, 128, False, "TND", True, 0, 256, 1),
 
 # data_type=float16, is_causal=True, cache_mode=1, layout=TND, is_varied=True, num_splits=1
 #   num_heads,kv_heads in {(6,6),(6,1),(6,3)}, head_size=A, (q_seqlen,kv_seqlen)=seqA, (window_left,window_right)=winA
     (torch.float16, 2, 6, 1, 1, 128, 32, 1, 128, True, "TND", True, 460, 62, 1),
-    # (torch.float16, 2, 6, 6, 16, 20000, 59, 1, 128, True, "TND", True, 0, 256, 1),
+    (torch.float16, 2, 6, 6, 16, 20000, 59, 1, 128, True, "TND", True, 0, 256, 1),
     (torch.float16, 2, 6, 6, 16, 131072, 32, 1, 128, True, "TND", True, 59, 571, 1),
     (torch.float16, 2, 6, 3, 3, 799, 80, 1, 128, True, "TND", True, -1, -1, 1),
     (torch.float16, 2, 6, 3, 3, 1024, 64, 1, 128, True, "TND", True, -1, -1, 1),
