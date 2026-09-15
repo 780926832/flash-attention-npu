@@ -317,6 +317,7 @@ test_cases = [
     (torch.float16, 2, 6, 6, 512, 1024, 128, 1, 128, True, "TND", True, 746, 16, 0),
     (torch.bfloat16, 2, 6, 6, 1024, 1024, 128, 1, 128, True, "TND", True, 512, 0, 0),
     (torch.bfloat16, 2, 6, 6, 512, 512, 128, 1, 128, False, "BSND", False, 508, -256, 0),
+    (torch.bfloat16, 1, 13, 1, 17, 1, 1, 1, 128, False, "BSND", False, 0, 0, 0),
     (torch.float16, 2, 6, 6, 512, 512, 128, 1, 128, True, "BSND", False, -128, 864, 0),
     # SWA Sq>>Sk (empty-prefix / neg-empty / overlong-wR).
     (torch.bfloat16, 4, 1, 1, 512, 32, 16, 0, 128, False, "BSND", False, 8, -1, 0),
