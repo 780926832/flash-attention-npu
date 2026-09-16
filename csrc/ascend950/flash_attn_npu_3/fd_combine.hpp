@@ -154,8 +154,11 @@ public:
         const uint32_t partialCountAlign =
             RoundUp(partialCount, FLOATS_PER_BLOCK);
         const uint32_t headDim = tiling->embeddingSizeV;
+        
+        constexpr uint32_t O_ELEMS_PER_BLOCK =
+            static_cast<uint32_t>(32U / sizeof(ElementO));
         const uint32_t dRound =
-            RoundUp(headDim, FLOATS_PER_BLOCK);
+            RoundUp(headDim, O_ELEMS_PER_BLOCK);
         const uint32_t lsePartialStride = 2U * tiling->fdLseSubStride;
         const uint32_t qTokenBase =
             static_cast<uint32_t>(actualQ.GetValue(batchIdx)) + qStart;

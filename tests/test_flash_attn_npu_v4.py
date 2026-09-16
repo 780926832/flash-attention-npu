@@ -292,6 +292,8 @@ test_cases = [
     (torch.bfloat16, 2, 64, 8, 1, 2048, 128, 1, 128, True, "TND", True, -1, -1, 0),
     (torch.bfloat16, 2, 128, 16, 1, 2048, 128, 1, 128, True, "TND", True, -1, -1, 0),
     (torch.float16, 2, 512, 1, 1, 1024, 128, 1, 128, True, "TND", True, -1, -1, 0),
+    # fp16 paged TND, B1 H96x2 Sq4 Sk8191 D1 causal ns0
+    (torch.float16, 1, 96, 2, 4, 8191, 1, 1, 128, True, "TND", False, -1, -1, 0),
     # Active FD with the same Q-head merge policy as normal FA.
     # Full merged block: group_size=8, qNBlockTile=8.
     (torch.bfloat16, 1, 8, 1, 4, 4096, 64, 1, 128, False, "TND", False, -1, -1, 4),
