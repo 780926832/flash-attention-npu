@@ -218,6 +218,10 @@ test_cases = [
     (torch.bfloat16, 1, 40, 8, 513, 1023, 256, 1, 128, True, "TND", False, -1, -1, 0.0, 2, False),
     # Generator upper batch tier with a minimal dense tensor footprint.
     (torch.bfloat16, 128, 1, 1, 1, 1, 1, 0, 128, False, "BSND", False, -1, -1, 0.0, 0, False),
+    # GQA empty-prefix O-clear (causal window=(0,0), two O tiles)
+    (torch.float16, 9, 86, 1, 9, 1, 172, 0, 128, True, "BSND", False, 0, 0, 0.0, 0, False),
+    # GQA empty-prefix O-clear (bidir window=(0,1), paged TND, two O tiles)
+    (torch.bfloat16, 1, 15, 1, 15, 3, 192, 1, 128, False, "TND", False, 0, 1, 0.0, 0, False),
     # Cache-update path: new_kv=True appends k_new/v_new to the existing KV cache.
     (torch.bfloat16, 1, 32, 4, 1, 2048, 128, 1, 128, False, "BSND", False, -1, -1, 0.0, 0, True),
     (torch.bfloat16, 2, 16, 2, 1, 4096, 128, 1, 128, True, "BSND", False, -1, -1, 0.0, 0, True),
