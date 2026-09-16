@@ -47,6 +47,15 @@ def _pad_bwd_headdim(dout, q, k, v, out, head_size_og):
     """
     Pad headdim to a multiple of 64 for the bwd kernel.
     """
+    q_dtype = q.dtype
+    if q_dtype not in (torch.float16, torch.bfloat16):
+        raise ValueError(f"mha_bwd only supports FP16 and BF16, got {q_dtype}")
+    for name, t in (("k", k), ("v", v), ("out", out), ("dout", dout)):
+        if t.dtype != q_dtype:
+            raise ValueError(
+                f"mha_bwd: q/k/v/out/dout must have the same dtype, "
+                f"got q={q_dtype}, {name}={t.dtype}"
+            )
     if dout.size(-1) != head_size_og:
         raise ValueError(
             f"dout headdim ({dout.size(-1)}) must equal original q/k/v "
