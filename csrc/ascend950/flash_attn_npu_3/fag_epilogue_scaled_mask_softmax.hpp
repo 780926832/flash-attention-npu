@@ -102,23 +102,33 @@ public:
                 const int64_t delta =
                     static_cast<int64_t>(block.s2Start) -
                     rowStart - diagOffset;
-                const uint32_t maskRowStart = Max(-delta, (int64_t)0);
-                const uint32_t maskColStart = Max(delta, (int64_t)0);
-                const auto maskGmOffset = attenMaskGm.layout()(
-                    tla::MakeCoord(maskRowStart, maskColStart));
+                if (delta >= static_cast<int64_t>(s1RealSize)) {
+                    // Whole slice above the causal diagonal (only reachable when
+                    // a dense schedule feeds masked-invalid blocks): mask all
+                    // rows; the 256x256 mask window would be out of range.
+                    AscendC::Duplicate(
+                        attenMaskUbTensor,
+                        static_cast<uint8_t>(1),
+                        static_cast<uint32_t>(s1RealSize) * S2_ROW_STRIDE);
+                } else {
+                    const uint32_t maskRowStart = Max(-delta, (int64_t)0);
+                    const uint32_t maskColStart = Max(delta, (int64_t)0);
+                    const auto maskGmOffset = attenMaskGm.layout()(
+                        tla::MakeCoord(maskRowStart, maskColStart));
 
-                AscendC::DataCopyExtParams maskCopyParams{
-                    static_cast<uint16_t>(s1RealSize),
-                    static_cast<uint32_t>(S2_ROW_STRIDE * sizeof(uint8_t)),
-                    static_cast<int64_t>((256U - S2_ROW_STRIDE) * sizeof(uint8_t)),
-                    0, 0};
-                AscendC::DataCopyPadExtParams<uint8_t> maskPadParams{
-                    false, 0, 0, 0};
-                AscendC::DataCopyPad(
-                    attenMaskUbTensor,
-                    attenMaskGm.data()[maskGmOffset],
-                    maskCopyParams,
-                    maskPadParams);
+                    AscendC::DataCopyExtParams maskCopyParams{
+                        static_cast<uint16_t>(s1RealSize),
+                        static_cast<uint32_t>(S2_ROW_STRIDE * sizeof(uint8_t)),
+                        static_cast<int64_t>((256U - S2_ROW_STRIDE) * sizeof(uint8_t)),
+                        0, 0};
+                    AscendC::DataCopyPadExtParams<uint8_t> maskPadParams{
+                        false, 0, 0, 0};
+                    AscendC::DataCopyPad(
+                        attenMaskUbTensor,
+                        attenMaskGm.data()[maskGmOffset],
+                        maskCopyParams,
+                        maskPadParams);
+                }
             } else {
                 // This AIV slice lies completely below the causal diagonal.
                 // Clear the reusable ping/pong mask slot so a previous masked
@@ -188,7 +198,7 @@ private:
      * valid columns in the current basic block.
      */
     template <bool HAS_ATTEN_MASK, bool HAS_SOFTCAP>
-    __simd_vf__ static inline void MulsMaskSimpleSoftmax(
+    __simd_vf__ inline void MulsMaskSimpleSoftmax(
         __ubuf__ ElementP *dstUb,
         __ubuf__ ElementS *srcUb,
         __ubuf__ uint8_t *maskUb,

@@ -126,6 +126,30 @@ mha_bwd(
     fag_info.maskType = is_causal ? FAGTiling950::MaskType::CAUSAL
                                   : FAGTiling950::MaskType::NO_MASK;
     fag_info.deterministic = deterministic ? 1U : 0U;
+    // Deterministic accumulation strategy.  BN2S2 applies the opst arch35
+    // column-private schedule when the shape is covered; otherwise fall back
+    // to the per-round det-slot + streaming VecDTM reduction.
+    fag_info.detSchedule = 0;
+    if (deterministic && !is_varlen) {
+        const int64_t bh = batch_size * num_heads_kv;
+        const int64_t m = (q_seqlen + 127) / 128;
+        const int64_t n = (kv_seqlen + 127) / 128;
+        const int64_t group_num = num_heads / num_heads_kv;
+        const fag_det_host::Selection sel = fag_det_host::SelectSchedule(
+            is_causal, bh, m, n, group_num, static_cast<int64_t>(aic_num));
+        if (sel.supported) {
+            fag_info.detSchedule =
+                static_cast<uint32_t>(FAGTiling950::DetSchedule::BN2S2);
+        }
+    }
+    // Deterministic v1: dq always post-absorbed by VecDTM; Vec cores split
+    // into three fixed groups of 16 (dq/dk/dv). Heuristics are TBD.
+    fag_info.dqPostAbsorb = deterministic ? 1U : 0U;
+    if (deterministic) {
+        fag_info.dqVecNum = 8;
+        fag_info.dkVecNum = 8;
+        fag_info.dvVecNum = 8;
+    }
     fag_info.batch = batch_size;
     fag_info.qSeqlen = q_seqlen;
     fag_info.qHeadNum = num_heads;
@@ -147,6 +171,8 @@ mha_bwd(
     // than carrying host-only sequence vectors in its device tiling ABI.
     at::Tensor cu_q_cpu;
     at::Tensor cu_k_cpu;
+    std::vector<int64_t> actual_seq_q;
+    std::vector<int64_t> actual_seq_kv;
     if (is_varlen) {
         const at::Tensor &cu_q_tensor = cu_seqlens_q_.value();
         const at::Tensor &cu_k_tensor = cu_seqlens_k_.value();
@@ -166,6 +192,19 @@ mha_bwd(
         const int32_t *kv_lengths = cu_k_cpu.data_ptr<int32_t>();
         TORCH_CHECK(q_lengths[0] == 0 && kv_lengths[0] == 0,
                     "Ascend950 v3 bwd: cu_seqlens must start at zero");
+        actual_seq_q.resize(batch_size);
+        actual_seq_kv.resize(batch_size);
+        bool tndAllNonEmpty = batch_size > 0;
+        for (int64_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
+            actual_seq_q[batch_idx] =
+                q_lengths[batch_idx + 1] - q_lengths[batch_idx];
+            actual_seq_kv[batch_idx] =
+                kv_lengths[batch_idx + 1] - kv_lengths[batch_idx];
+            if (actual_seq_q[batch_idx] <= 0 ||
+                actual_seq_kv[batch_idx] <= 0) {
+                tndAllNonEmpty = false;
+            }
+        }
         for (int64_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
             TORCH_CHECK(
                 q_lengths[batch_idx + 1] >= q_lengths[batch_idx] &&
@@ -182,6 +221,20 @@ mha_bwd(
                     kv_lengths[batch_size] ==
                         static_cast<int64_t>(fag_info.totalKv),
                     "Ascend950 v3 bwd: final cu_seqlens values must match packed tensor lengths");
+        // TND BN2S2: hand the per-batch lengths to the tiler, which
+        // serializes the round/area prefix table.  MHA needs the swizzle's
+        // intra-round uniqueness condition; GQA uses opst's flat partition.
+        // Causal TND reuses the dense schedule with the causal mask applied
+        // in the epilogue (masked blocks contribute exact zeros), same as
+        // the rectangular BSND causal path.
+        if (deterministic && tndAllNonEmpty &&
+            batch_size + 1 <=
+                static_cast<int64_t>(FAGTiling950::TND_SWIZZLE_PREFIX_NUM)) {
+            fag_info.actualSeqQ = actual_seq_q.data();
+            fag_info.actualSeqKv = actual_seq_kv.data();
+            fag_info.detSchedule =
+                static_cast<uint32_t>(FAGTiling950::DetSchedule::BN2S2);
+        }
     }
 
     uint64_t ub_size = 0;
@@ -194,6 +247,16 @@ mha_bwd(
         FAGTiling950::GetFAGTilingParam(fag_info, fag_tiling_data);
     TORCH_CHECK(tiling_status == 0,
                 "Ascend950 v3 bwd: arch35 GetFAGTilingParam failed");
+    // The old in-loop VecDTM deterministic fallback was replaced by the cube
+    // BN2S2 schedule.  Any deterministic shape the tiler cannot map to BN2S2
+    // must fail loudly instead of silently running a non-deterministic loop.
+    if (deterministic) {
+        TORCH_CHECK(
+            fag_tiling_data.detSchedule ==
+                static_cast<uint32_t>(FAGTiling950::DetSchedule::BN2S2),
+            "Ascend950 v3 bwd: deterministic backward requires the BN2S2 "
+            "schedule for this shape");
+    }
     at::Tensor tiling_cpu = at::empty(
         {static_cast<int64_t>(sizeof(FAGTiling950::FAGTilingData))},
         at::device(c10::kCPU).dtype(at::kByte));
@@ -214,6 +277,36 @@ mha_bwd(
     TORCH_CHECK(workspace_size % sizeof(float) == 0 &&
                     fag_tiling_data.deltaOffset % sizeof(float) == 0,
                 "Ascend950 v3 bwd: FP32 workspace offsets must be aligned");
+    if (deterministic) {
+        if (fag_tiling_data.detSchedule ==
+            static_cast<uint32_t>(FAGTiling950::DetSchedule::BN2S2)) {
+            if (fag_tiling_data.detPrivDkv != 0) {
+                TORCH_CHECK(
+                    fag_tiling_data.dqOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.dkPrivOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.dvPrivOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.dvPrivOffset < workspace_size,
+                    "Ascend950 v3 bwd: deterministic BN2S2 private workspace "
+                    "offsets must be 512B-aligned and inside the workspace");
+            } else {
+                TORCH_CHECK(
+                    fag_tiling_data.dqOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.dkOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.dvOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                        fag_tiling_data.deltaOffset < workspace_size,
+                    "Ascend950 v3 bwd: deterministic BN2S2 shared workspace "
+                    "offsets must be 512B-aligned and inside the workspace");
+            }
+        } else {
+            TORCH_CHECK(
+                fag_tiling_data.dqDetOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                    fag_tiling_data.dkDetOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                    fag_tiling_data.dvDetOffset % FAGTiling950::GM_ALIGNMENT == 0 &&
+                    fag_tiling_data.dvDetOffset < workspace_size,
+                "Ascend950 v3 bwd: deterministic det workspace offsets must be "
+                "512B-aligned and inside the workspace");
+        }
+    }
     at::Tensor workspace = at::empty(
         {static_cast<int64_t>(workspace_size / sizeof(float))},
         at::device(at::kPrivateUse1).dtype(at::kFloat));
