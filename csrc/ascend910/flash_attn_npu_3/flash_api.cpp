@@ -788,10 +788,16 @@ mha_bwd(at::Tensor dout,  // (b, s_q, h, dv) or (total_q, h, dv) if there is cu_
     auto aclStream = c10_npu::getCurrentNPUStream().stream(false);
     uint32_t blockDim = platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic();
 
+    const auto q_dtype = q.dtype();
+    const bool is_bf16 = q_dtype == torch::kBFloat16;
+    const bool is_fp16 = q_dtype == torch::kFloat16;
+    TORCH_CHECK(is_bf16 || is_fp16, "mha_bwd only supports FP16 and BF16 data types");
+    TORCH_CHECK(k.dtype() == q_dtype && v.dtype() == q_dtype &&
+                    dout.dtype() == q_dtype && out.dtype() == q_dtype,
+                "mha_bwd: q/k/v/out/dout must have the same dtype");
+
     // input/output tensor
     at::Tensor dq, dk, dv;
-    bool is_bf16 = q.dtype() == torch::kBFloat16;
-
     if (dq_.has_value()) {
         dq = dq_.value();
     }  else {
@@ -807,6 +813,8 @@ mha_bwd(at::Tensor dout,  // (b, s_q, h, dv) or (total_q, h, dv) if there is cu_
     }  else {
         dv = torch::empty_like(v);
     }
+    TORCH_CHECK(dq.dtype() == q_dtype && dk.dtype() == q_dtype && dv.dtype() == q_dtype,
+                "mha_bwd: dq/dk/dv must have the same dtype as q/k/v");
 
     const bool is_varlen_q = cu_seqlens_q_.has_value();
     const bool is_varlen_kv = cu_seqlens_k_.has_value();
@@ -867,10 +875,13 @@ mha_bwd(at::Tensor dout,  // (b, s_q, h, dv) or (total_q, h, dv) if there is cu_
     // For non-exact dims (e.g. 1, 80), choose the nearest supported bucket.
     uint32_t qk_headdim_kernel = q_headdim <= 64 ? 64 : (q_headdim <= 128 ? 128 : (q_headdim <= 192 ? 192 : 256));
     int64_t batch_size = is_varlen_q ? (cu_seqlens_q.size(0) - 1) : qsizes[0];
+    TORCH_CHECK(batch_size > 0, "mha_bwd: batch size must be positive");
     TORCH_CHECK(!is_varlen_q || max_seqlen_q_.has_value(), "max_seqlen_q must be provided in varlen bwd.");
     TORCH_CHECK(!is_varlen_q || max_seqlen_k_.has_value(), "max_seqlen_k must be provided in varlen bwd.");
     int64_t max_seqlen_q = is_varlen_q ? max_seqlen_q_.value() : qsizes[1];
     int64_t max_seqlen_k = is_varlen_q ? max_seqlen_k_.value() : ksizes[1];
+    TORCH_CHECK(max_seqlen_q > 0 && max_seqlen_k > 0,
+                "mha_bwd: sequence lengths must be positive");
 
     // tiling args set
     uint32_t tilingSize = sizeof(FAGTilingData);
