@@ -25,6 +25,7 @@ public:
         dvWorkspace_.SetGlobalBuffer(reinterpret_cast<__gm__ float *>(
             workspace + tiling_->dvOffset));
         zeroUb_ = resource.ubBuf.template GetBufferByByte<float>(0);
+        workspace_ = workspace;
     }
 
     CATLASS_DEVICE void operator()(
@@ -37,12 +38,31 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vToMte3Event);
 
-        const uint64_t dqCount = static_cast<uint64_t>(tiling_->totalQ) * tiling_->qHeadNum * tiling_->qkHeadDim;
+        // dqPostAbsorb=1 (deterministic): the dq workspace is a single rolling
+        // tile (qTile x RoundUp(qkHeadDim,8) floats, see fag_tiling.cpp), NOT
+        // the full S1*N1 region.  Clearing the full count here would overrun
+        // into the dk/dv/delta regions and race with FagSoftmaxGradFront's
+        // delta writes (no barrier between the two epilogue calls).
+        const uint64_t dqCount = tiling_->dqPostAbsorb
+            ? static_cast<uint64_t>(tiling_->qTile) * ((tiling_->qkHeadDim + 7U) / 8U * 8U)
+            : static_cast<uint64_t>(tiling_->totalQ) * tiling_->qHeadNum * tiling_->qkHeadDim;
         const uint64_t dkCount = static_cast<uint64_t>(tiling_->totalKv) * tiling_->kvHeadNum * tiling_->qkHeadDim;
         const uint64_t dvCount = static_cast<uint64_t>(tiling_->totalKv) * tiling_->kvHeadNum * tiling_->vHeadDim;
         ClearRegion(dqWorkspace_, dqCount, vectorCoreId, vectorCoreNum);
-        ClearRegion(dkWorkspace_, dkCount, vectorCoreId, vectorCoreNum);
-        ClearRegion(dvWorkspace_, dvCount, vectorCoreId, vectorCoreNum);
+        // BN2S2 with per-core private dk/dv: the private regions' first write
+        // of a column overwrites stale data, so only dq is zeroed.
+        if (tiling_->detPrivDkv == 0) {
+            ClearRegion(dkWorkspace_, dkCount, vectorCoreId, vectorCoreNum);
+            ClearRegion(dvWorkspace_, dvCount, vectorCoreId, vectorCoreNum);
+        }
+        if (vectorCoreId == 0) {
+            // GM_ADDR is __gm__ uint8_t*: cast to int64_t to zero the FULL
+            // counters, and use atomics so the zeroing is visible at L2 —
+            // a scalar store could sit in this core's DCache and never reach
+            // the L2 where the v2 AtomicAdd/poll operate.
+            AscendC::AtomicExch(reinterpret_cast<__gm__ uint64_t *>(workspace_), (uint64_t)0);                   // readyCounter
+            AscendC::AtomicExch(reinterpret_cast<__gm__ uint64_t *>(workspace_ + sizeof(uint64_t)), (uint64_t)0); // doneCounter
+        }
     }
 
 private:
@@ -80,6 +100,7 @@ private:
     }
 
     const __gm__ TilingData *tiling_ = nullptr;
+    GM_ADDR workspace_ = nullptr;
     AscendC::GlobalTensor<float> dqWorkspace_;
     AscendC::GlobalTensor<float> dkWorkspace_;
     AscendC::GlobalTensor<float> dvWorkspace_;

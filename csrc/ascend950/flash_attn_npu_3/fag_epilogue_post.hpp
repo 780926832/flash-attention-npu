@@ -56,15 +56,26 @@ public:
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Ping);
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Pong);
         uint32_t pingPongIdx = 0;
-        ProcessRegion<false>(dvGm_, dvWorkspace_, dvCount, 1.0F,
-            vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
-            mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
-        ProcessRegion<true>(dkGm_, dkWorkspace_, dkCount, tiling_->scaleValue,
-            vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
-            mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
-        ProcessRegion<true>(dqGm_, dqWorkspace_, dqCount, tiling_->scaleValue,
-            vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
-            mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
+        // BN2S2 with per-core private dk/dv: they have already been converted
+        // to the bf16 outputs by the paired AIVs at each column end; only dq
+        // is finalized here.  GQA keeps the shared fp32 path.
+        const bool privDkv = tiling_->detPrivDkv != 0;
+        if (!privDkv) {
+            ProcessRegion<false>(dvGm_, dvWorkspace_, dvCount, 1.0F,
+                vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
+                mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
+            ProcessRegion<true>(dkGm_, dkWorkspace_, dkCount, tiling_->scaleValue,
+                vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
+                mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
+        }
+        // dqPostAbsorb=1 (deterministic): VecDTM has already written dqGm_
+        // directly and dqWorkspace_ is only a single rolling tile — FagPost
+        // must not convert dq here (it would read OOB and clobber dqGm_).
+        if (tiling_->dqPostAbsorb == 0) {
+            ProcessRegion<true>(dqGm_, dqWorkspace_, dqCount, tiling_->scaleValue,
+                vectorCoreId, vectorCoreNum, pingPongIdx, mte3ToMte2Ping, mte3ToMte2Pong,
+                mte2ToVPing, mte2ToVPong, vToMte3Ping, vToMte3Pong);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Ping);
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2Pong);
     }
