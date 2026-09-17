@@ -429,7 +429,7 @@ def test_fa_kvcache_fd_num_splits(num_splits):
     )
 
 
-@pytest.mark.parametrize("num_splits", [0, 1], ids=["auto", "no-split"])
+@pytest.mark.parametrize("num_splits", [0, 1])
 def test_fa_kvcache_fd_append_tail_regression(num_splits):
     """The final core must compute and write back the separate new-KV block."""
     data_type = torch.bfloat16
@@ -473,7 +473,7 @@ def test_fa_kvcache_fd_append_tail_regression(num_splits):
     assert_fa_close(lse, lse_ref, lse_pt, name="append-tail softmax_lse")
 
 
-@pytest.mark.parametrize("num_splits", [0, 1, 20], ids=["auto", "no-split", "fixed-fallback"])
+@pytest.mark.parametrize("num_splits", [0, 1, 20])
 def test_fa_kvcache_fd_gqa_tail_regression(num_splits):
     """Uneven batches and a partial head group must not lose the final KV tasks."""
     cores = torch.npu.get_device_properties(torch.npu.current_device()).cube_core_num
