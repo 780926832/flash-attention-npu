@@ -8,18 +8,20 @@ _device_name = torch_npu.npu.get_device_name() if torch_npu.npu.device_count() >
 if "Ascend910" not in _device_name:
     pytest.skip("flash_attn_func / flash_attn_varlen_func / get_scheduler_metadata only on Ascend910", allow_module_level=True)
 
+from tests.common.attention_ref import ref_flash_attention_pair
+from tests.common.compare import assert_fa_close
+from tests.common.test_utils import (
+    gather_paged_kv_batch,
+    make_golden_attention_mask,
+    make_random_tensor,
+)
 from flash_attn_npu_4 import (
     flash_attn_func,
     flash_attn_varlen_func,
     get_scheduler_metadata,
 )
-from tests.common.attention_ref import ref_flash_attention_pair
-from tests.common.compare import assert_fa_close
-from tests.common.test_utils import gather_paged_kv_batch, make_random_tensor
-
 
 WINDOW_SIZE = (-1, -1)
-
 
 def _prefix_sums(lengths):
     offsets = [0]
@@ -571,6 +573,12 @@ KV_CACHE_SWA_SOFTCAP_CASES = [
 ]
 
 
+KV_CACHE_PAGED_SHORT_KV_WINDOW_CASES = [
+    (torch.float16, 2, 4, 2, 15, 2, 8, 128, False, (3, 2), 2.0),
+    (torch.float16, 2, 4, 4, 9, 2, 64, 128, True, (3, 2), 2.0),
+]
+
+
 @pytest.mark.parametrize(
     "data_type, batch_size, num_heads, kv_heads, q_seqlen, kv_seqlen, head_size, is_causal, window_size",
     FLASH_ATTN_FUNC_SWA_CASES,
@@ -774,3 +782,98 @@ def test_flash_attn_kvcache_metadata_swa_softcap(
         window_size=window_size,
         softcap=softcap,
     )
+
+
+@pytest.mark.parametrize(
+    "data_type, batch_size, num_heads, kv_heads, q_seqlen, kv_seqlen, head_size, block_size, is_causal, window_size, softcap",
+    KV_CACHE_PAGED_SHORT_KV_WINDOW_CASES,
+    ids=["noncausal-window-collapses", "causal-window-collapses"],
+)
+def test_flash_attn_kvcache_metadata_paged_short_kv_window(
+    data_type, batch_size, num_heads, kv_heads, q_seqlen, kv_seqlen, head_size,
+    block_size, is_causal, window_size, softcap,
+):
+    """Metadata path must follow actual cache_seqlens, not page capacity."""
+    query = make_random_tensor(
+        (batch_size, q_seqlen, num_heads, head_size), data_type, low=-1.0, high=1.0, device="npu"
+    )
+    key_cache, value_cache, page_table = _make_paged_cache(
+        batch_size, kv_seqlen, kv_heads, head_size, block_size, data_type
+    )
+    cache_seqlens = _int32_npu([kv_seqlen] * batch_size)
+    scale = 1.0 / (head_size ** 0.5)
+    capacity = int(page_table.shape[1]) * block_size
+    assert capacity > kv_seqlen
+
+    def _mask_kind(bound):
+        wl, wr = window_size
+        if bound > 0 and wl >= bound:
+            wl = -1
+        if bound > 0 and wr >= bound:
+            wr = -1
+        if is_causal:
+            wr = 0
+        is_c = wl < 0 and wr == 0
+        is_l = (wl >= 0 or wr >= 0) and not is_c
+        return (is_c, is_l)
+
+    assert _mask_kind(capacity) != _mask_kind(kv_seqlen)
+
+    scheduler_metadata = _metadata(
+        batch_size=batch_size,
+        q_seqlen=q_seqlen,
+        kv_seqlen=capacity,
+        num_heads=num_heads,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        cache_seqlens=cache_seqlens,
+        data_type=data_type,
+        page_size=block_size,
+        is_causal=is_causal,
+        window_size=window_size,
+        softcap=softcap,
+        softmax_scale=scale,
+    )
+
+    def _run(metadata):
+        out, lse, *_ = _flash_attn_kvcache(
+            query,
+            key_cache,
+            value_cache,
+            cache_seqlens,
+            page_table,
+            metadata,
+            max_seqlen_q=q_seqlen,
+            softmax_scale=scale,
+            causal=is_causal,
+            window_size=window_size,
+            softcap=softcap,
+        )
+        return out, lse
+
+    out_host, lse_host = _run(None)
+    out_meta, lse_meta = _run(scheduler_metadata)
+
+    key_batched, value_batched = gather_paged_kv_batch(
+        key_cache.detach().cpu(), value_cache.detach().cpu(), page_table.cpu(),
+        kv_seqlen, block_size,
+    )
+    mask, is_causal_g, is_local_g = make_golden_attention_mask(
+        q_seqlen, kv_seqlen, is_causal, window_size[0], window_size[1],
+    )
+    golden_out_ref, golden_lse_ref, golden_out_pt, golden_lse_pt = ref_flash_attention_pair(
+        query.detach().cpu(), key_batched, value_batched, scale,
+        mask if (is_causal_g or is_local_g) else None,
+        data_type, softcap=softcap,
+    )
+    if mask is not None:
+        fully_masked = mask.all(dim=-1)
+        golden_out_ref[:, fully_masked] = 0
+        golden_out_pt[:, fully_masked] = 0
+        golden_lse_ref[:, :, fully_masked] = torch.inf
+        golden_lse_pt[:, :, fully_masked] = torch.inf
+
+    assert_fa_close(out_host, golden_out_ref, golden_out_pt, softcap=softcap, name="host_out")
+    assert_fa_close(out_meta, golden_out_ref, golden_out_pt, softcap=softcap, name="meta_out")
+    assert_fa_close(lse_host, golden_lse_ref, golden_lse_pt, softcap=softcap, name="host_lse")
+    assert_fa_close(lse_meta, golden_lse_ref, golden_lse_pt, softcap=softcap, name="meta_lse")

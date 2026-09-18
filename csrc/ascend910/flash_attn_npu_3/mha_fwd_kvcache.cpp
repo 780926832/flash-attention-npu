@@ -708,7 +708,7 @@ namespace SplitFuse {
                 int32_t leftPointwindowSizeRight = 0;
                 if (windowSizeLeft < 0 && windowSizeLeft * (-1) >= qSeqlen) {
                     kvStart = kvSeqlen / MAX_KV_STACK_LEN + 1;
-                } else if (windowSizeLeft != SPARSE_MODE_INT_MAX) {
+                } else if (windowSizeLeft != WINDOW_SIZE_INT_MAX) {
                     leftPointwindowSizeLeft = kvSeqlen - qSeqlen - windowSizeLeft;
                     windowSizeLeftStartLen = qSBlockIdx * curQSBlockTile + leftPointwindowSizeLeft;
                     windowSizeLeftEndLen = qSBlockIdx * curQSBlockTile + qSBlockSize + leftPointwindowSizeLeft;
@@ -719,7 +719,7 @@ namespace SplitFuse {
                 }
                 if (windowSizeRight < 0 && windowSizeRight * (-1) >= kvSeqlen) {
                     kvSLoopNumTotal = 0;
-                } else if (windowSizeRight != SPARSE_MODE_INT_MAX) {
+                } else if (windowSizeRight != WINDOW_SIZE_INT_MAX) {
                     leftPointwindowSizeRight = kvSeqlen - qSeqlen + windowSizeRight;
                     windowSizeRightStartLen = qSBlockIdx * curQSBlockTile + leftPointwindowSizeRight;
                     windowSizeRightEndLen = qSBlockIdx * curQSBlockTile + qSBlockSize + leftPointwindowSizeRight;
@@ -732,9 +732,9 @@ namespace SplitFuse {
                     noSkipKvS = kvSeqlen;
                     kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
                 }
-                if (windowSizeLeftEndLen > static_cast<int32_t>(kvSeqlen) && windowSizeLeft != SPARSE_MODE_INT_MAX) {
+                if (windowSizeLeftEndLen > static_cast<int32_t>(kvSeqlen) && windowSizeLeft != WINDOW_SIZE_INT_MAX) {
                     invalidSuffixStartRow = kvSeqlen - leftPointwindowSizeLeft;
-                } else if (windowSizeRightStartLen < 0 && windowSizeRight != SPARSE_MODE_INT_MAX) {
+                } else if (windowSizeRightStartLen < 0 && windowSizeRight != WINDOW_SIZE_INT_MAX) {
                     invalidPrefixEndRow = -leftPointwindowSizeRight;
                 }
             } else {
