@@ -269,20 +269,14 @@ jobs:
           git config --global --add safe.directory "$PWD"
           REPO_URL="https://github.com/${GITHUB_REPOSITORY}.git"
 
-          # Resolve the host proxy before the repository is cloned (the shared
-          # ci/docker_proxy.sh helper is not available at this point yet).
-          proxy_http="${HTTP_PROXY:-}"
-          proxy_https="${HTTPS_PROXY:-}"
-          proxy_no="${NO_PROXY:-}"
+          # Git-only proxy before the repo (and ci/docker_proxy.sh) exists.
+          # Do not export HTTP_PROXY; only git http.<url>.proxy for the whitelist.
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy NO_PROXY no_proxy || true
+          git_proxy=""
+          git_proxy_hosts="github.com,gist.github.com,api.github.com,raw.githubusercontent.com,codeload.github.com,objects.githubusercontent.com"
           case " $(hostname -I 2>/dev/null || true) " in
-            *" 192.168.13.241 "*)
-              proxy_http=http://127.0.0.1:18790
-              proxy_https=http://127.0.0.1:18790
-              proxy_no=localhost,127.0.0.1,::1 ;;
-            *" 192.168.9.226 "*)
-              proxy_http=http://127.0.0.1:17890
-              proxy_https=http://127.0.0.1:17890
-              proxy_no=localhost,127.0.0.1,::1 ;;
+            *" 192.168.13.241 "*) git_proxy=http://127.0.0.1:18790 ;;
+            *" 192.168.9.226 "*) git_proxy=http://127.0.0.1:17890 ;;
           esac
           proxy_file="${PROXY_CONFIG_FILE:-${GOLDEN_CACHE_HOST_DIR:-/home/FA_NPU_CI_DATA}/proxy.conf}"
           if [ -f "$proxy_file" ]; then
@@ -293,20 +287,41 @@ jobs:
               proxy_value="${proxy_value#"${proxy_value%%[![:space:]]*}"}"
               proxy_value="${proxy_value%"${proxy_value##*[![:space:]]}"}"
               case "$proxy_key" in
-                HTTP_PROXY|http_proxy) proxy_http="$proxy_value" ;;
-                HTTPS_PROXY|https_proxy) proxy_https="$proxy_value" ;;
-                NO_PROXY|no_proxy) proxy_no="$proxy_value" ;;
+                GIT_PROXY|HTTPS_PROXY|HTTP_PROXY|https_proxy|http_proxy) git_proxy="$proxy_value" ;;
+                GIT_PROXY_WHITELIST|PROXY_WHITELIST) git_proxy_hosts="$proxy_value" ;;
               esac
             done < "$proxy_file"
           fi
-          [ "${CI_HTTP_PROXY+x}" = x ] && proxy_http="$CI_HTTP_PROXY"
-          [ "${CI_HTTPS_PROXY+x}" = x ] && proxy_https="$CI_HTTPS_PROXY"
-          [ "${CI_NO_PROXY+x}" = x ] && proxy_no="$CI_NO_PROXY"
-          export HTTP_PROXY="$proxy_http" HTTPS_PROXY="$proxy_https" NO_PROXY="$proxy_no"
+          [ "${CI_GIT_PROXY+x}" = x ] && git_proxy="$CI_GIT_PROXY"
+          [ "${CI_GIT_PROXY_WHITELIST+x}" = x ] && git_proxy_hosts="$CI_GIT_PROXY_WHITELIST"
+          git_proxy_conf="$(mktemp /tmp/ci-git-proxy.XXXXXX.conf)"
+          : > "$git_proxy_conf"
+          if [ -n "$git_proxy" ]; then
+            git_proxy_hosts="${git_proxy_hosts//,/ }"
+            for git_proxy_host in $git_proxy_hosts; do
+              git_proxy_host="${git_proxy_host#"${git_proxy_host%%[![:space:]]*}"}"
+              git_proxy_host="${git_proxy_host%"${git_proxy_host##*[![:space:]]}"}"
+              [ -n "$git_proxy_host" ] || continue
+              if [[ "$git_proxy_host" == *"://"* ]]; then
+                printf '[http "%s"]\n\tproxy = %s\n' "$git_proxy_host" "$git_proxy" >> "$git_proxy_conf"
+              else
+                printf '[http "https://%s"]\n\tproxy = %s\n' "$git_proxy_host" "$git_proxy" >> "$git_proxy_conf"
+                printf '[http "https://%s/"]\n\tproxy = %s\n' "$git_proxy_host" "$git_proxy" >> "$git_proxy_conf"
+                printf '[http "http://%s"]\n\tproxy = %s\n' "$git_proxy_host" "$git_proxy" >> "$git_proxy_conf"
+                printf '[http "http://%s/"]\n\tproxy = %s\n' "$git_proxy_host" "$git_proxy" >> "$git_proxy_conf"
+              fi
+            done
+          fi
+          chmod 644 "$git_proxy_conf" 2>/dev/null || true
           proxy_args=()
-          [ -n "$proxy_http" ] && proxy_args+=(-e "HTTP_PROXY=$proxy_http")
-          [ -n "$proxy_https" ] && proxy_args+=(-e "HTTPS_PROXY=$proxy_https")
-          [ -n "$proxy_no" ] && proxy_args+=(-e "NO_PROXY=$proxy_no")
+          if [ -s "$git_proxy_conf" ]; then
+            proxy_args+=(
+              -v "$git_proxy_conf:/tmp/ci-git-proxy.conf:ro"
+              -e GIT_CONFIG_COUNT=1
+              -e GIT_CONFIG_KEY_0=include.path
+              -e GIT_CONFIG_VALUE_0=/tmp/ci-git-proxy.conf
+            )
+          fi
 
           # docker 容器 (root) clone, 避免 runner 用户与残留 root 文件的权限冲突
           # clone 后: fetch base 分支最新, checkout base, merge PR head
@@ -362,6 +377,15 @@ jobs:
 
           if [ "$docker_ok" != "true" ]; then
             echo "[clone][docker] failed, fallback to host"
+            if [ -s "$git_proxy_conf" ]; then
+              export GIT_CONFIG_COUNT=1
+              export GIT_CONFIG_KEY_0=include.path
+              export GIT_CONFIG_VALUE_0="$git_proxy_conf"
+            fi
+            git config --global --add safe.directory /workspace
+            git config --global user.email "ci-bot@flash-attention-npu"
+            git config --global user.name "NPU CI Bot"
+            git config --global http.postBuffer 524288000
             for i in 1 2 3; do
               echo "[clone][host] attempt $i/3"
               rm -rf .git csrc/catlass 2>/dev/null || true

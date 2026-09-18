@@ -26,7 +26,7 @@
 #   GOLDEN_CACHE_STATS_FILE (容器内固定为 /tmp/ci_test_logs/golden_cache_events.tsv)
 #   GOLDEN_CACHE_MAX_TEST_DIRS (默认 32, 每个 reference 版本保留的测试文件组数)
 #   PROXY_CONFIG_FILE (默认 $GOLDEN_CACHE_HOST_DIR/proxy.conf)
-#   CI_HTTP_PROXY / CI_HTTPS_PROXY / CI_NO_PROXY (可选, 覆盖代理配置)
+#   CI_GIT_PROXY / CI_GIT_PROXY_WHITELIST (可选, 覆盖 git 代理和白名单)
 
 set -euo pipefail
 
@@ -48,7 +48,7 @@ GOLDEN_CACHE_MODE="${GOLDEN_CACHE_MODE:-cache}"
 
 # shellcheck source=ci/docker_proxy.sh
 source "$SCRIPT_DIR/docker_proxy.sh"
-docker_proxy_init "$GOLDEN_CACHE_HOST_DIR"
+git_proxy_init "$GOLDEN_CACHE_HOST_DIR"
 
 log() { printf '[CI] %s\n' "$*"; }
 die() { printf '[CI][ERROR] %s\n' "$*" >&2; exit 1; }
@@ -100,7 +100,7 @@ run_build_phase() {
   docker run --rm \
     --label "com.flash-attention-npu.ci.scope=$CI_CONTAINER_SCOPE" \
     "${privileged_args[@]}" \
-    "${DOCKER_PROXY_ENV_ARGS[@]}" \
+    "${GIT_PROXY_DOCKER_ARGS[@]}" \
     --network host \
     --ipc host \
     -v "$REPO_ROOT:/workspace/flash-attention-npu" \
@@ -155,7 +155,7 @@ run_docker_test() {
   docker run --rm \
     --label "com.flash-attention-npu.ci.scope=$CI_CONTAINER_SCOPE" \
     "${privileged_args[@]}" \
-    "${DOCKER_PROXY_ENV_ARGS[@]}" \
+    "${GIT_PROXY_DOCKER_ARGS[@]}" \
     --network host \
     --ipc host \
     -v "$REPO_ROOT:/workspace/flash-attention-npu" \
