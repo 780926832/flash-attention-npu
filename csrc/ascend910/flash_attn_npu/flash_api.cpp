@@ -70,11 +70,9 @@ struct FwdMaskDerivation {
     uint32_t maskType;
 };
 
-// Window normalization + mask-type derivation, mirroring the host tiling code.
-// The caller provides the logical KV bound (or cache capacity for the KV-cache
-// API), so this path does not need a D2H sync to inspect the actual lengths.
-// Both sides compare against the KV bound, matching the host's
-// "both sides vs seqlen_k" rule.
+// Window normalization + mask-type derivation for the metadata *layout*.
+// The KV bound is the declared logical length / cache capacity (no D2H).
+// AICPU later refines maskType / windows against the actual max KV length.
 static FwdMaskDerivation DeriveFwdMask(bool causal, int64_t window_left, int64_t window_right,
                                        int64_t /*max_seqlen_q*/, int64_t max_seqlen_k_bound)
 {
@@ -91,7 +89,7 @@ static FwdMaskDerivation DeriveFwdMask(bool causal, int64_t window_left, int64_t
     derived.is_causal = (window_left < 0 && window_right == 0);
     derived.is_local = (window_left >= 0 || window_right >= 0) && !derived.is_causal;
     // Match the host tiling: infinite local side -> finite KV bound, not
-    // SPARSE_MODE_INT_MAX (fwd MASK_SWA mishandles INT_MAX right bounds).
+    // WINDOW_SIZE_INT_MAX (fwd MASK_SWA mishandles INT_MAX right bounds).
     if (derived.is_local) {
         if (window_left < 0) {
             window_left = max_seqlen_k_bound;
@@ -460,7 +458,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
         TORCH_CHECK(!(appendKV && is_local), 
                 "NPU FlashAttention append-KV does not support sliding-window attention (window_size) yet");
          // Match Tri Dao set_params_fprop: infinite local side → seqlen_k (finite),
-        // not SPARSE_MODE_INT_MAX (fwd MASK_SWA mishandles INT_MAX right bounds).
+        // not WINDOW_SIZE_INT_MAX (fwd MASK_SWA mishandles INT_MAX right bounds).
         if (is_local) {
             if (window_size_left < 0) {
                 window_size_left = max_kv_seqlen;
@@ -1545,8 +1543,9 @@ at::Tensor get_scheduler_metadata(
     const uint32_t ps = page_size.has_value() ? static_cast<uint32_t>(page_size.value()) : 128;
     const uint32_t blockDim = platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic();
     TORCH_CHECK(softcap >= 0.0, "softcap must be non-negative (0.0 disables softcap)");
-    // Mask axes are fully derived on host from the declared seqlen bounds; the
-    // AICPU kernel only copies the final values into the tiling blob.
+    // Mask *layout* (buffer size / kernel template) is derived on host from
+    // the declared seqlen bounds / cache capacity (no D2H). AICPU re-derives
+    // tiling maskType / windows against the actual max KV length.
     FwdMaskDerivation maskDer = DeriveFwdMask(causal, window_size_left, window_size_right,
                                               max_seqlen_q, max_seqlen_k);
     float scaleValue = softmax_scale.has_value() ? static_cast<float>(softmax_scale.value())

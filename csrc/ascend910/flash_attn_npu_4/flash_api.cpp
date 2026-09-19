@@ -38,7 +38,7 @@ using namespace KernelCommon;
 
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 
-extern __global__ __aicpu__ uint32_t ComputeFAMetadata(void *args);
+extern __global__ __aicpu__ uint32_t ComputeFAMetadataV4(void *args);
 
 #define ACL_CHECK(expr) TORCH_CHECK((expr) == ACL_SUCCESS, #expr " failed")
 
@@ -50,14 +50,10 @@ struct FwdMaskDerivation {
     uint32_t maskType;
 };
 
-// Window normalization + mask-type derivation, mirroring the host tiling branch
-// in mha_fwd, but bounding the KV side with a host-known upper bound
-// (max_seqlen_k / cache capacity) instead of the device-side actual max KV
-// seqlen, so it is usable on the scheduler-metadata path where no D2H sync is
-// allowed. Both sides compare against the KV bound (matching the host's "both
-// sides vs seqlen_k" rule); an over-long window collapses to "no window", and
-// a window that covers the whole sequence masks nothing, so a bound larger
-// than the actual seqlen is still semantically identical.
+// Window normalization + mask-type derivation for the metadata *layout*.
+// The KV bound is cache capacity (no D2H). AICPU later refines maskType /
+// windows against the actual max KV length; a capacity-sized bound is not
+// equivalent when q_seqlen > kv_seqlen (a window can still mask rows).
 static FwdMaskDerivation DeriveFwdMask(bool causal, int64_t window_left, int64_t window_right,
                                        int64_t /*max_seqlen_q*/, int64_t max_seqlen_k_bound)
 {
@@ -129,7 +125,7 @@ static at::Tensor GetSchedulerMetadataImpl(FAMetadataArgs args,
                           metadataDone = events.metadataDone, metaArgs]() mutable -> int {
         ACL_CHECK(aclrtRecordEvent(inputReady, curHandle));
         ACL_CHECK(aclrtStreamWaitEvent(aicpuHandle, inputReady));
-        ComputeFAMetadata<<<1, nullptr, aicpuHandle>>>(&metaArgs, sizeof(metaArgs));
+        ComputeFAMetadataV4<<<1, nullptr, aicpuHandle>>>(&metaArgs, sizeof(metaArgs));
         ACL_CHECK(aclrtRecordEvent(metadataDone, aicpuHandle));
         ACL_CHECK(aclrtStreamWaitEvent(curHandle, metadataDone));
         return 0;
@@ -657,8 +653,9 @@ at::Tensor get_scheduler_metadata(
     TORCH_CHECK(!pack_gqa.has_value() || !pack_gqa.value(), "NPU FlashAttention does not support pack_gqa");
     (void)qkv_dtype;
     (void)sm_margin;  // accepted for interface parity; unused in the fwd metadata path
-    // Mask axes are fully derived on host from the declared seqlen bounds; the
-    // AICPU kernel only copies the final values into the tiling blob. The KV
+    // Mask *layout* (buffer size / kernel template) is derived on host from
+    // the declared seqlen bounds / cache capacity (no D2H). AICPU re-derives
+    // tiling maskType / windows against the actual max KV length. The KV
     // side is always supplied as per-batch lengths (cache_seqlens), matching
     // how the Python wrapper precomputes it before calling get_scheduler_metadata.
     FwdMaskDerivation maskDer = DeriveFwdMask(causal, window_size_left, window_size_right,
