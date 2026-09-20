@@ -1,6 +1,6 @@
 # Copyright (c) 2026, Huawei Technologies Co., Ltd.
 """
-FlashAttention v3 (Ascend950) 反向矩阵测试：直接调用 _flash_attn_backward。
+FlashAttention v4 (Ascend950) 反向矩阵测试：直接调用 _flash_attn_backward。
 
 Ascend950 的 autograd 前向 lse 布局尚不可用，故本测试不经过 autograd：
 - out / softmax_lse 由 torch 小算子参考前向（CPU fp32）算出再搬上 NPU；
@@ -25,11 +25,11 @@ sq > sk 时前 sq-sk 行没有任何可见 key，参考前向/标杆自身 NaN�
 矩阵仅适用于 Ascend950；其他设备（如 Ascend910）整文件 skip。
 
 用法（仓库根目录）:
-  python -m pytest tests/test_flash_attn_npu_v3_bwd_det.py -v
-  python -m pytest tests/test_flash_attn_npu_v3_bwd_det.py -k bsnd        # 只跑 BSND
-  python -m pytest tests/test_flash_attn_npu_v3_bwd_det.py -k tnd         # 只跑 TND
-  python -m pytest tests/test_flash_attn_npu_v3_bwd_det.py -k small       # 只跑小规模
-  python -m pytest tests/test_flash_attn_npu_v3_bwd_det.py \
+  python -m pytest tests/test_flash_attn_npu_v4_bwd_det.py -v
+  python -m pytest tests/test_flash_attn_npu_v4_bwd_det.py -k bsnd        # 只跑 BSND
+  python -m pytest tests/test_flash_attn_npu_v4_bwd_det.py -k tnd         # 只跑 TND
+  python -m pytest tests/test_flash_attn_npu_v4_bwd_det.py -k small       # 只跑小规模
+  python -m pytest tests/test_flash_attn_npu_v4_bwd_det.py \
       -k "not large and not long and not eq and not pack8"                # 跳过大规模
 """
 
@@ -37,7 +37,7 @@ import pytest
 import torch
 import torch_npu
 
-from flash_attn_npu_3.flash_attn_npu_interface_950 import _flash_attn_backward
+from flash_attn_npu_4.flash_attn_npu_interface_950 import _flash_attn_backward
 from tests.fa_small_op_golden import golden_bsnd_bwd_from_fwd, golden_tnd_bwd_from_fwd
 
 INPUT_LIMIT = 2.0
@@ -205,28 +205,19 @@ def torch_ref_fwd_tnd(q, k, v, cu_q, cu_k, scale, causal):
 def run_bwd_bsnd(q, k, v, dout, out, lse, scale, causal, det):
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
     _flash_attn_backward(
-        dout,
         q,
         k,
         v,
         out,
+        dout,
         lse,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        dq,
-        dk,
-        dv,
-        scale,
-        causal,
-        -1,
-        -1,
-        SOFTCAP,
-        det,
-        0,
+        softmax_scale=scale,
+        causal=causal,
+        softcap=SOFTCAP,
+        deterministic=det,
+        dq=dq,
+        dk=dk,
+        dv=dv,
     )
     torch.npu.synchronize()
     return dq, dk, dv
@@ -235,28 +226,23 @@ def run_bwd_bsnd(q, k, v, dout, out, lse, scale, causal, det):
 def run_bwd_varlen(q, k, v, dout, out, lse, cu_q_t, cu_k_t, max_sq, max_sk, scale, causal, det):
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
     _flash_attn_backward(
-        dout,
         q,
         k,
         v,
         out,
+        dout,
         lse,
-        cu_q_t,
-        cu_k_t,
-        None,
-        None,
-        max_sq,
-        max_sk,
-        dq,
-        dk,
-        dv,
-        scale,
-        causal,
-        -1,
-        -1,
-        SOFTCAP,
-        det,
-        0,
+        softmax_scale=scale,
+        causal=causal,
+        softcap=SOFTCAP,
+        cu_seqlens_q=cu_q_t,
+        cu_seqlens_k=cu_k_t,
+        max_seqlen_q=max_sq,
+        max_seqlen_k=max_sk,
+        deterministic=det,
+        dq=dq,
+        dk=dk,
+        dv=dv,
     )
     torch.npu.synchronize()
     return dq, dk, dv
