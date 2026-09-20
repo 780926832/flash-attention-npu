@@ -19,11 +19,12 @@ def test_fa4_910_scheduler_metadata_torch_compile_correctness():
         api,
         expected_sizes={
             "NO_MASK": 2376,
-            "CAUSAL": 4196680,
-            "LOCAL_LEFT": 4196680,
-            "LOCAL_RIGHT": 4196680,
+            "CAUSAL": 2376,
+            "LOCAL_LEFT": 2376,
+            "LOCAL_RIGHT": 2376,
             "FULL_WINDOW_COLLAPSE": 2376,
         },
+        tiling_only_metadata=True,
     )
 
 
@@ -97,4 +98,3 @@ def test_fa4_910_fixed_torch_compile_correctness():
         api,
         backward=True,
     )
-

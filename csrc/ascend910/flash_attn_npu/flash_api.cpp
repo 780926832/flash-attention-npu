@@ -26,6 +26,7 @@
 #include "torch_npu/csrc/framework/OpCommand.h"
 #include "runtime/rt_ffts.h"
 #include "fa_metadata_args.h"
+#include "device_triu_mask.h"
 #include "fa_split.h"
 #include "fwd_dispatch.hpp"
 #include "varlen_bwd_dispatch.hpp"
@@ -395,7 +396,10 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                     "causal/window-derived layout");
         auto metaBase = static_cast<uint8_t *>(schedMd.data_ptr());
         tilingDevice = metaBase + fa_metadata::TilingOffset(hasMask);
-        maskDevice = hasMask ? metaBase : nullptr;
+        if (hasMask) {
+            mask_gpu_tensor = MakeDeviceTriuMask();
+            maskDevice = static_cast<uint8_t *>(mask_gpu_tensor.data_ptr());
+        }
         int64_t wsBase = static_cast<int64_t>(fa_metadata::WorkSpaceSize(blockDim));
         int64_t wsSplit = 0;
         // The AICPU may trigger flash-decode split-KV on device; reserve the
@@ -570,9 +574,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
             tiling_cpu_ptr->set_maskType(static_cast<uint32_t>(FaiKenel::MaskType::MASK_CAUSAL));
         }
         if (is_causal || is_local) {
-            at::Tensor mask_cpu_tensor = at::empty({2048, 2048}, at::device(c10::kCPU).dtype(at::kByte));
-            mask_cpu_tensor = at::triu(at::ones_like(mask_cpu_tensor), 1);
-            mask_gpu_tensor = mask_cpu_tensor.to(at::Device(at::kPrivateUse1));
+            mask_gpu_tensor = MakeDeviceTriuMask();
             maskDevice = static_cast<uint8_t *>(mask_gpu_tensor.data_ptr());
         }
         tiling_gpu_tensor = tiling_cpu_tensor.to(at::Device(at::kPrivateUse1));
@@ -759,7 +761,10 @@ mha_fwd(at::Tensor &q,                            // batch_size x seqlen_q x num
                     "causal/window-derived layout");
         auto metaBase = static_cast<uint8_t *>(schedMd.data_ptr());
         tilingDevice = metaBase + fa_metadata::TilingOffset(hasMask);
-        maskDevice = hasMask ? metaBase : nullptr;
+        if (hasMask) {
+            mask_gpu_tensor = MakeDeviceTriuMask();
+            maskDevice = static_cast<uint8_t *>(mask_gpu_tensor.data_ptr());
+        }
         workspace_tensor = at::empty({static_cast<int64_t>(fa_metadata::WorkSpaceSize(blockDim))},
                                      at::device(at::kPrivateUse1).dtype(at::kByte));
         // The AICPU tiling does not carry the dropout fields; patch them in
@@ -770,9 +775,7 @@ mha_fwd(at::Tensor &q,                            // batch_size x seqlen_q x num
                                  has_dropout ? static_cast<uint8_t *>(const_cast<void *>(drop_mask_npu_tensor.data_ptr())) : nullptr);
     } else {
         if (is_causal || is_local) {
-            at::Tensor mask_cpu_tensor = at::empty({2048, 2048}, at::device(c10::kCPU).dtype(at::kByte));
-            mask_cpu_tensor = at::triu(at::ones_like(mask_cpu_tensor), 1);
-            mask_gpu_tensor = mask_cpu_tensor.to(at::Device(at::kPrivateUse1));
+            mask_gpu_tensor = MakeDeviceTriuMask();
             maskDevice = static_cast<uint8_t *>(const_cast<void *>(mask_gpu_tensor.data_ptr()));
         }
 
@@ -1069,7 +1072,10 @@ mha_varlen_fwd(at::Tensor &q,  // total_q x num_heads x head_size, total_q := \s
                     "causal/window-derived layout");
         auto metaBase = static_cast<uint8_t *>(schedMd.data_ptr());
         tilingDevice = metaBase + fa_metadata::TilingOffset(hasMask);
-        maskDevice = hasMask ? metaBase : nullptr;
+        if (hasMask) {
+            mask_gpu_tensor = MakeDeviceTriuMask();
+            maskDevice = static_cast<uint8_t *>(mask_gpu_tensor.data_ptr());
+        }
         workspace_tensor = at::empty({static_cast<int64_t>(fa_metadata::WorkSpaceSize(blockDim))},
                                      at::device(at::kPrivateUse1).dtype(at::kByte));
         // Dropout pointers and the physical page-table row width are only
@@ -1162,9 +1168,7 @@ mha_varlen_fwd(at::Tensor &q,  // total_q x num_heads x head_size, total_q := \s
 
         // attention mask
         if (is_causal || is_local) {
-            at::Tensor mask_cpu_tensor = at::empty({2048, 2048}, at::device(c10::kCPU).dtype(at::kByte));
-            mask_cpu_tensor = at::triu(at::ones_like(mask_cpu_tensor), 1);
-            mask_gpu_tensor = mask_cpu_tensor.to(at::Device(at::kPrivateUse1));
+            mask_gpu_tensor = MakeDeviceTriuMask();
             maskDevice = static_cast<uint8_t *>(const_cast<void *>(mask_gpu_tensor.data_ptr()));
         }
     }
@@ -1588,5 +1592,5 @@ PYBIND11_MODULE(flash_attn_npu, m)
     m.def("fwd_kvcache", &mha_fwd_kvcache, "Forward pass, with KV-cache");
     m.def("varlen_fwd", &mha_varlen_fwd, "Forward pass (variable length)");
     m.def("varlen_bwd", &mha_varlen_bwd, "Backward pass (variable length)");
-    m.def("get_scheduler_metadata", &get_scheduler_metadata, "Precompute scheduler metadata (tiling + mask) on AICPU");
+    m.def("get_scheduler_metadata", &get_scheduler_metadata, "Precompute scheduler metadata (tiling) on AICPU");
 }

@@ -648,7 +648,7 @@ def test_flash_attn_func_metadata_dropout(dropout_p, metadata_spy):
     meta = metadata_spy[0][2]
 
     # The host patches the AICPU tiling dropout fields on the scheduler-metadata path.
-    tiling = _tiling_from_metadata(meta, has_mask=False)
+    tiling = _tiling_from_metadata(meta)
     expected_keep = 1.0 / (1.0 - dropout_p)
     assert abs(tiling.dropoutValue - expected_keep) < 1e-4, \
         f"dropoutValue={tiling.dropoutValue} 期望 {expected_keep}"
@@ -704,7 +704,7 @@ def test_flash_attn_varlen_func_metadata_dropout(metadata_spy):
     assert len(metadata_spy) == 1
     meta = metadata_spy[0][2]
 
-    tiling = _tiling_from_metadata(meta, has_mask=False)
+    tiling = _tiling_from_metadata(meta)
     expected_keep = 1.0 / (1.0 - dropout_p)
     assert abs(tiling.dropoutValue - expected_keep) < 1e-4, \
         f"dropoutValue={tiling.dropoutValue} 期望 {expected_keep}"
@@ -958,10 +958,11 @@ class _FAInferTilingData(ctypes.Structure):
     ]
 
 
-def _tiling_from_metadata(scheduler_metadata, has_mask):
+def _tiling_from_metadata(scheduler_metadata):
     raw = scheduler_metadata.cpu().numpy()
-    mask_bytes = 2048 * 2048 if has_mask else 0
-    blob = raw[mask_bytes:mask_bytes + ctypes.sizeof(_FAInferTilingData)]
+    # scheduler_metadata is tiling-only: the triu mask is built on the device by
+    # MakeDeviceTriuMask whenever the derived mask type needs one.
+    blob = raw[:ctypes.sizeof(_FAInferTilingData)]
     tiling = _FAInferTilingData.from_buffer_copy(blob)
     return tiling
 
@@ -992,7 +993,7 @@ def test_flash_attn_kvcache_metadata_flash_decode(is_causal):
         page_size=block_size,
         is_causal=is_causal,
     )
-    tiling = _tiling_from_metadata(scheduler_metadata, has_mask=is_causal)
+    tiling = _tiling_from_metadata(scheduler_metadata)
     assert tiling.flashDecodeFlag == 1
     assert tiling.needCoreNum > 0
     assert tiling.splitLseTotalSize > 0

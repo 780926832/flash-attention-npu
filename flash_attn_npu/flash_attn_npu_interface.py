@@ -1745,42 +1745,14 @@ def _validate_scheduler_metadata(scheduler_metadata, *, causal, window_size, sof
             "scheduler_metadata arguments do not match this call: " + "; ".join(mismatches)
         )
 # Real metadata contract:
-#   no mask:
+#   all mask types:
 #       shape = (2416,)
-#   causal / local mask:
-#       shape = (2416 + 2048 * 2048,)
 #   dtype  = torch.uint8
 #   device = NPU
 #   stride = (1,)
 # Schema matches the V2 910 pybind signature in flash_api.cpp
 # (not the V3/V4 parameter lists).
 _SCHEDULER_METADATA_TILING_BYTES = 2416
-_SCHEDULER_METADATA_MASK_BYTES = 2048 * 2048
-def _scheduler_metadata_has_mask(
-    causal: bool,
-    window_size_left: int,
-    window_size_right: int,
-    max_seqlen_k: int,
-) -> bool:
-    """Mirror the mask/no-mask decision of DeriveFwdMask in V2 flash_api.cpp."""
-    if max_seqlen_k > 0 and window_size_left >= max_seqlen_k:
-        window_size_left = -1
-    if max_seqlen_k > 0 and window_size_right >= max_seqlen_k:
-        window_size_right = -1
-    if causal:
-        window_size_right = 0
-    is_causal = (
-        window_size_left < 0
-        and window_size_right == 0
-    )
-    is_local = (
-        (
-            window_size_left >= 0
-            or window_size_right >= 0
-        )
-        and not is_causal
-    )
-    return is_causal or is_local
 @torch.library.custom_op(
     "flash_attn_npu::_get_scheduler_metadata",
     mutates_args=(),
@@ -1804,7 +1776,7 @@ def _get_scheduler_metadata_op(
     softmax_scale: Optional[float],
     alibi_slopes_batch_stride: int,
 ) -> torch.Tensor:
-    return flash_attn_npu.get_scheduler_metadata(
+    scheduler_metadata = flash_attn_npu.get_scheduler_metadata(
         batch_size,
         max_seqlen_q,
         max_seqlen_k,
@@ -1823,6 +1795,21 @@ def _get_scheduler_metadata_op(
         softmax_scale,
         alibi_slopes_batch_stride,
     )
+    # Keep this side effect inside the opaque custom op so Dynamo does not
+    # trace the setattr while still attaching the runtime fingerprint.
+    if softmax_scale is None:
+        softmax_scale = headdim ** (-0.5)
+    scheduler_metadata._fa_scheduler_params = {
+        "causal": bool(causal),
+        "window_size": (int(window_size_left), int(window_size_right)),
+        "softcap": float(softcap),
+        "softmax_scale": float(softmax_scale),
+        "page_size": None if page_size is None else int(page_size),
+        "max_seqlen_q": int(max_seqlen_q),
+        "max_seqlen_k": int(max_seqlen_k),
+        "alibi_slopes_batch_stride": int(alibi_slopes_batch_stride),
+    }
+    return scheduler_metadata
 @_torch_register_fake_wrapper(
     "flash_attn_npu::_get_scheduler_metadata"
 )
@@ -1845,22 +1832,8 @@ def _get_scheduler_metadata_fake(
     softmax_scale: Optional[float],
     alibi_slopes_batch_stride: int,
 ) -> torch.Tensor:
-    has_mask = _scheduler_metadata_has_mask(
-        causal,
-        window_size_left,
-        window_size_right,
-        max_seqlen_k,
-    )
-    metadata_bytes = (
-        _SCHEDULER_METADATA_TILING_BYTES
-        + (
-            _SCHEDULER_METADATA_MASK_BYTES
-            if has_mask
-            else 0
-        )
-    )
     return torch.empty(
-        (metadata_bytes,),
+        (_SCHEDULER_METADATA_TILING_BYTES,),
         dtype=torch.uint8,
         device=cache_seqlens.device,
     )
@@ -1877,8 +1850,8 @@ def get_scheduler_metadata(
     softmax_scale=None,  # defaults to 1 / sqrt(headdim); must match the fwd call
     alibi_slopes_batch_stride=0,
 ):
-    """Precompute the forward scheduler metadata (tiling, optional mask, and —
-    for paged KV cache — the flash-decode split schedule) on the AICPU. Pass the
+    """Precompute the forward scheduler metadata (tiling, and for paged KV cache
+    the flash-decode split schedule) on the AICPU. Pass the
     result as scheduler_metadata to flash_attn_with_kvcache to keep the forward
     free of D2H/H2D syncs."""
     cache_seqlens = maybe_contiguous(cache_seqlens)
@@ -1905,19 +1878,4 @@ def get_scheduler_metadata(
         softmax_scale,
         alibi_slopes_batch_stride,
     )
-    # Fingerprint the creation arguments so flash_attn_with_kvcache can reject
-    # metadata whose baked-in tiling does not match the call consuming it.
-    # Remount after the custom_op return: dynamic attrs are not preserved.
-    if softmax_scale is None:
-        softmax_scale = headdim ** (-0.5)
-    scheduler_metadata._fa_scheduler_params = {
-        "causal": bool(causal),
-        "window_size": (int(window_size[0]), int(window_size[1])),
-        "softcap": float(softcap),
-        "softmax_scale": float(softmax_scale),
-        "page_size": None if page_size is None else int(page_size),
-        "max_seqlen_q": int(max_seqlen_q),
-        "max_seqlen_k": int(max_seqlen_k),
-        "alibi_slopes_batch_stride": int(alibi_slopes_batch_stride),
-    }
     return scheduler_metadata
