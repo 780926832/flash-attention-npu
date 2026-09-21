@@ -1778,6 +1778,7 @@ def _get_scheduler_metadata_op(
     softcap: float,
     softmax_scale: Optional[float],
     alibi_slopes_batch_stride: int,
+    num_splits: int,
 ) -> torch.Tensor:
     scheduler_metadata = flash_attn_npu.get_scheduler_metadata(
         batch_size,
@@ -1797,6 +1798,7 @@ def _get_scheduler_metadata_op(
         softcap,
         softmax_scale,
         alibi_slopes_batch_stride,
+        num_splits,
     )
     # Keep this side effect inside the opaque custom op so Dynamo does not
     # trace the setattr while still attaching the runtime fingerprint.
@@ -1811,6 +1813,7 @@ def _get_scheduler_metadata_op(
         "max_seqlen_q": int(max_seqlen_q),
         "max_seqlen_k": int(max_seqlen_k),
         "alibi_slopes_batch_stride": int(alibi_slopes_batch_stride),
+        "num_splits": int(num_splits),
     }
     return scheduler_metadata
 @_torch_register_fake_wrapper(
@@ -1834,6 +1837,7 @@ def _get_scheduler_metadata_fake(
     softcap: float,
     softmax_scale: Optional[float],
     alibi_slopes_batch_stride: int,
+    num_splits: int,
 ) -> torch.Tensor:
     return torch.empty(
         (_SCHEDULER_METADATA_TILING_BYTES,),
@@ -1883,20 +1887,4 @@ def get_scheduler_metadata(
         alibi_slopes_batch_stride,
         num_splits,
     )
-    # Fingerprint the creation arguments so flash_attn_with_kvcache can reject
-    # metadata whose baked-in tiling does not match the call consuming it.
-    # Remount after the custom_op return: dynamic attrs are not preserved.
-    if softmax_scale is None:
-        softmax_scale = headdim ** (-0.5)
-    scheduler_metadata._fa_scheduler_params = {
-        "causal": bool(causal),
-        "window_size": (int(window_size[0]), int(window_size[1])),
-        "softcap": float(softcap),
-        "softmax_scale": float(softmax_scale),
-        "page_size": None if page_size is None else int(page_size),
-        "max_seqlen_q": int(max_seqlen_q),
-        "max_seqlen_k": int(max_seqlen_k),
-        "alibi_slopes_batch_stride": int(alibi_slopes_batch_stride),
-        "num_splits": int(num_splits),
-    }
     return scheduler_metadata
