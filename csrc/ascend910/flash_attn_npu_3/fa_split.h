@@ -229,9 +229,6 @@ inline void fillCoreInfoForFlashDecode(FAInferTilingData* tiling, uint32_t group
         tiling->coreInfo[coreIdx].endS1Idx = nowS1Idx;
         tiling->coreInfo[coreIdx].endS2Idx = nowS2Idx;
 
-        // A zero S2 cursor points at the next task. Close the range at the
-        // preceding task instead: the kernel visits endB/endN1/endS1
-        // inclusively and would initialize the next task's output to zero.
         if (nowS2Idx == 0) {
             auto& end = tiling->coreInfo[coreIdx];
             BatchParams pEnd = p;

@@ -10,7 +10,7 @@
 
 #include "tilingdata.h"
 
-namespace fd_tiling {
+namespace fa_split {
 
 constexpr uint32_t Q_TILE_CEIL = 128U;
 constexpr uint32_t Q_N_SPLIT_ALIGN = 2U;
@@ -382,6 +382,6 @@ inline PlanStatus BuildPlan(const PlanInput &input, FAInferTilingData &tiling)
     return PlanStatus::ENABLED;
 }
 
-}  // namespace fd_tiling
+}  // namespace fa_split
 
 #endif  // FLASH_ATTN_NPU_950_V3_FA_SPLIT_H

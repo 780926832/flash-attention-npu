@@ -94,8 +94,6 @@ public:
 
         const int64_t vectorsubBlockNum = AscendC::GetSubBlockNum();
         const int64_t vectorsubBlockID = AscendC::GetSubBlockIdx();
-        // GetBlockIdx spans all launched vector cores in this mixed kernel.
-        // Use the launch size (which may be needCoreNum), not a board constant.
         const int64_t subBlockNum = AscendC::GetBlockNum() * vectorsubBlockNum;
         const int64_t subBlockID = AscendC::GetBlockIdx();
 

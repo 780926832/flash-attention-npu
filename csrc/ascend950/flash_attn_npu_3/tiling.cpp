@@ -118,7 +118,7 @@ namespace optiling{
 
     uint32_t FAInferTiling::GetQNBlockTile(uint32_t qSeqlen, uint32_t groupSize)
     {
-        return fd_tiling::GetQNBlockTile(
+        return fa_split::GetQNBlockTile(
             qSeqlen, groupSize, faInfo_.embeddingSizeV > 128);
     }
 
@@ -241,7 +241,7 @@ namespace optiling{
 
     void FAInferTiling::FillFlashDecodeTilingData(FAInferTilingData &tiling)
     {
-        const fd_tiling::PlanInput input{
+        const fa_split::PlanInput input{
             faInfo_.qSeqlenList,
             faInfo_.kvSeqlenList,
             static_cast<uint32_t>(faInfo_.batch),
@@ -256,7 +256,7 @@ namespace optiling{
             faInfo_.pagedCacheFlag,
             0U};
         tiling.fdPlanStatus = static_cast<uint32_t>(
-            fd_tiling::BuildPlan(input, tiling));
+            fa_split::BuildPlan(input, tiling));
     }
 
     void FAInferTiling::FillSplitCoreTilingData(FAInferTilingData &faTilingData)

@@ -266,7 +266,7 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
         metadataMayEnableFd = !is_local && paged_KV && is_varlen_q &&
             seqlen_q <= 16 && num_splits != 1;
         if (metadataMayEnableFd) {
-            workSpaceSize = fd_tiling::WorkspaceUpperBound(
+            workSpaceSize = fa_split::WorkspaceUpperBound(
                 fa_metadata::WorkSpaceSize(blockDim), blockDim,
                 static_cast<uint32_t>(head_size_v));
             combineBlockDim = blockDim;
