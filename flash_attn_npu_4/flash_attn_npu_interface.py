@@ -164,11 +164,8 @@ def _flash_attn_forward(
 #
 # Real metadata contract:
 #
-#   no mask:
+#   all mask types:
 #       shape = (2376,)
-#
-#   causal / local mask:
-#       shape = (2376 + 2048 * 2048,)
 #
 #   dtype  = torch.uint8
 #   device = NPU
@@ -179,45 +176,6 @@ def _flash_attn_forward(
 # ----------------------------------------------------------------------
 
 _SCHEDULER_METADATA_TILING_BYTES = 2376
-_SCHEDULER_METADATA_MASK_BYTES = 2048 * 2048
-
-
-def _scheduler_metadata_has_mask(
-    causal: bool,
-    window_size_left: int,
-    window_size_right: int,
-    max_seqlen_k: int,
-) -> bool:
-    """Mirror the mask/no-mask decision of DeriveFwdMask in flash_api.cpp."""
-
-    # DeriveFwdMask:
-    #
-    # A window bound covering the whole K sequence is equivalent to
-    # an infinite window and therefore collapses to -1.
-    if max_seqlen_k > 0 and window_size_left >= max_seqlen_k:
-        window_size_left = -1
-
-    if max_seqlen_k > 0 and window_size_right >= max_seqlen_k:
-        window_size_right = -1
-
-    # Causal attention forces the right window to zero.
-    if causal:
-        window_size_right = 0
-
-    is_causal = (
-        window_size_left < 0
-        and window_size_right == 0
-    )
-
-    is_local = (
-        (
-            window_size_left >= 0
-            or window_size_right >= 0
-        )
-        and not is_causal
-    )
-
-    return is_causal or is_local
 
 
 @torch.library.custom_op(
@@ -293,24 +251,8 @@ def _get_scheduler_metadata_fake(
     softmax_scale: Optional[float],
 ) -> torch.Tensor:
 
-    has_mask = _scheduler_metadata_has_mask(
-        causal,
-        window_size_left,
-        window_size_right,
-        max_seqlen_k,
-    )
-
-    metadata_bytes = (
-        _SCHEDULER_METADATA_TILING_BYTES
-        + (
-            _SCHEDULER_METADATA_MASK_BYTES
-            if has_mask
-            else 0
-        )
-    )
-
     return torch.empty(
-        (metadata_bytes,),
+        (_SCHEDULER_METADATA_TILING_BYTES,),
         dtype=torch.uint8,
         device=cache_seqlens.device,
     )
@@ -336,10 +278,10 @@ def get_scheduler_metadata(
     sm_margin=0,
     softmax_scale=None,  # defaults to 1 / sqrt(headdim); must match the fwd call
 ):
-    """Precompute scheduler metadata (tiling + attention mask) on the AICPU.
+    """Precompute scheduler metadata (tiling) on the AICPU.
 
     This avoids the device->host->device round trip in the eager tiling path by
-    running the tiling/mask derivation on the NPU. The returned byte tensor is
+    running the tiling derivation on the NPU. The returned byte tensor is
     passed back to ``flash_attn_func`` / ``flash_attn_varlen_func`` through the
     ``scheduler_metadata`` argument.
     """

@@ -1385,10 +1385,8 @@ def _validate_scheduler_metadata(
 
 
 # Real metadata contract:
-#   no mask:
+#   all mask types:
 #       shape = (2384,)
-#   causal / local mask:
-#       shape = (2384 + 2048 * 2048,)
 #   dtype  = torch.uint8
 #   device = NPU
 #   stride = (1,)
@@ -1396,26 +1394,6 @@ def _validate_scheduler_metadata(
 # get_scheduler_metadata() implementation. Schema matches the V3 910
 # pybind signature in flash_api.cpp (not the V4 parameter list).
 _SCHEDULER_METADATA_TILING_BYTES = 2384
-_SCHEDULER_METADATA_MASK_BYTES = 2048 * 2048
-
-
-def _scheduler_metadata_has_mask(
-    causal: bool,
-    window_size_left: int,
-    window_size_right: int,
-    max_seqlen_k: int,
-) -> bool:
-    """Mirror the mask/no-mask decision of DeriveFwdMask in V3 flash_api.cpp."""
-
-    if max_seqlen_k > 0 and window_size_left >= max_seqlen_k:
-        window_size_left = -1
-    if max_seqlen_k > 0 and window_size_right >= max_seqlen_k:
-        window_size_right = -1
-    if causal:
-        window_size_right = 0
-    is_causal = window_size_left < 0 and window_size_right == 0
-    is_local = (window_size_left >= 0 or window_size_right >= 0) and not is_causal
-    return is_causal or is_local
 
 
 @torch.library.custom_op(
@@ -1449,7 +1427,7 @@ def _get_scheduler_metadata_op(
     sm_margin: int,
     softmax_scale: Optional[float],
 ) -> torch.Tensor:
-    return flash_attn_npu_3.get_scheduler_metadata(
+    scheduler_metadata = flash_attn_npu_3.get_scheduler_metadata(
         batch_size,
         max_seqlen_q,
         max_seqlen_k,
@@ -1476,6 +1454,22 @@ def _get_scheduler_metadata_op(
         sm_margin,
         softmax_scale,
     )
+    # Keep this side effect inside the opaque custom op so Dynamo does not
+    # trace the setattr while still attaching the runtime fingerprint.
+    if softmax_scale is None:
+        softmax_scale = headdim ** (-0.5)
+    scheduler_metadata._fa_scheduler_params = {
+        "causal": bool(causal),
+        "window_size": (int(window_size_left), int(window_size_right)),
+        "softcap": float(softcap),
+        "softmax_scale": float(softmax_scale),
+        "page_size": None if page_size is None else int(page_size),
+        "max_seqlen_q": int(max_seqlen_q),
+        "max_seqlen_k": int(max_seqlen_k),
+        "varlen_q": cu_seqlens_q is not None,
+        "num_splits": int(num_splits),
+    }
+    return scheduler_metadata
 
 
 @_torch_register_fake_wrapper("flash_attn_npu_3::_get_scheduler_metadata")
@@ -1506,17 +1500,8 @@ def _get_scheduler_metadata_fake(
     sm_margin: int,
     softmax_scale: Optional[float],
 ) -> torch.Tensor:
-    has_mask = _scheduler_metadata_has_mask(
-        causal,
-        window_size_left,
-        window_size_right,
-        max_seqlen_k,
-    )
-    metadata_bytes = _SCHEDULER_METADATA_TILING_BYTES + (
-        _SCHEDULER_METADATA_MASK_BYTES if has_mask else 0
-    )
     return torch.empty(
-        (metadata_bytes,),
+        (_SCHEDULER_METADATA_TILING_BYTES,),
         dtype=torch.uint8,
         device=cache_seqlens.device,
     )
@@ -1579,20 +1564,4 @@ def get_scheduler_metadata(
         sm_margin,
         softmax_scale,
     )
-    # Fingerprint the creation arguments so flash_attn_with_kvcache can reject
-    # metadata whose baked-in tiling does not match the call consuming it.
-    # Remount after the custom_op return: dynamic attrs are not preserved.
-    if softmax_scale is None:
-        softmax_scale = headdim ** (-0.5)
-    scheduler_metadata._fa_scheduler_params = {
-        "causal": bool(causal),
-        "window_size": (int(window_size[0]), int(window_size[1])),
-        "softcap": float(softcap),
-        "softmax_scale": float(softmax_scale),
-        "page_size": None if page_size is None else int(page_size),
-        "max_seqlen_q": int(max_seqlen_q),
-        "max_seqlen_k": int(max_seqlen_k),
-        "varlen_q": cu_seqlens_q is not None,
-        "num_splits": int(num_splits),
-    }
     return scheduler_metadata
