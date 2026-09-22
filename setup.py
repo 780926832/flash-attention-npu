@@ -441,9 +441,10 @@ class BishengBuildExt(build_ext):
 
 ext_modules = []
 
-if os.path.isdir(".git"):
+if os.path.isdir(".git") and os.environ.get("FLASH_ATTN_SKIP_SUBMODULE_INIT") != "1":
     subprocess.run(
-        ["git", "submodule", "update", "--init", "csrc/catlass"], check=False
+        ["git", "submodule", "update", "--init", "--depth", "1", "csrc/catlass"],
+        check=False,
     )
 
 if not os.path.exists(os.path.join(this_dir, "csrc/catlass", "include/catlass/catlass.hpp")):

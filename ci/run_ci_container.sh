@@ -2,7 +2,7 @@
 #
 # CI 容器入口 (两阶段):
 #   阶段1 (编译, 不加锁): docker run 不绑卡, 跑 ci/run_ci_build.sh
-#     - git submodule update --init
+#     - bash ci/init_submodules.sh (浅拉 + runner 磁盘缓存)
 #     - python setup.py build  (产物在 build/, 通过 volume 持久化)
 #   阶段2 (测试, 动态选卡): 探测 task_count<阈值的空闲卡 + docker run 绑卡, 跑 ci/run_ci_test.sh
 #     - NPU 自检
@@ -21,6 +21,9 @@
 #   CI_NPU_WAIT_INTERVAL_SEC (默认 30)     所有卡忙时重探间隔秒数
 #   ASCEND_RT_VISIBLE_DEVICES               手动指定宿主机物理卡时跳过自动选卡
 #   GOLDEN_CACHE_HOST_DIR (CI 固定为 /home/FA_NPU_CI_DATA)
+#   SUBMODULE_CACHE_DIR   (默认 $GOLDEN_CACHE_HOST_DIR/submodule-cache)
+#                         runner 用户写不了数据盘时, 仍挂载已存在的父目录,
+#                         由 root 编译容器创建并回填缓存; 宿主机只读恢复。
 #   GOLDEN_CACHE_DIR      (默认 /var/cache/flash-attention-npu/golden_cache)
 #   GOLDEN_CACHE_MODE     (默认 cache) cache|off
 #   GOLDEN_CACHE_STATS_FILE (容器内固定为 /tmp/ci_test_logs/golden_cache_events.tsv)
@@ -96,7 +99,23 @@ trap cleanup_on_signal SIGTERM SIGINT
 # ---------- 阶段1: 编译 (不加锁, 不绑卡) ----------
 run_build_phase() {
   local rc
+  local cache_dir="${SUBMODULE_CACHE_DIR:-${GOLDEN_CACHE_HOST_DIR}/submodule-cache}"
+  local cache_parent cache_mount_args=()
+  cache_parent="$(dirname -- "$cache_dir")"
   log "=== Phase 1: build (no NPU lock) ==="
+  # 宿主机优先只读恢复缓存; 写不了数据盘时只负责浅拉工作区。
+  # 编译容器以 root 挂载数据盘并回填缓存。容器内再跑一次作为兜底 (已就绪则秒过)。
+  bash "$SCRIPT_DIR/init_submodules.sh" "$REPO_ROOT"
+  # 不要要求 runner 用户能 mkdir/write。golden cache 同样依赖预建的 root 目录。
+  if [ -d "$cache_dir" ]; then
+    cache_mount_args=(-v "$cache_dir:$cache_dir" -e "SUBMODULE_CACHE_DIR=$cache_dir")
+    log "submodule cache mount: $cache_dir"
+  elif [ -d "$cache_parent" ]; then
+    cache_mount_args=(-v "$cache_parent:$cache_parent" -e "SUBMODULE_CACHE_DIR=$cache_dir")
+    log "submodule cache mount: $cache_parent (container will create $(basename -- "$cache_dir"))"
+  else
+    log "warning: submodule cache parent missing ($cache_parent); cache disabled"
+  fi
   docker run --rm \
     --label "com.flash-attention-npu.ci.scope=$CI_CONTAINER_SCOPE" \
     "${privileged_args[@]}" \
@@ -104,7 +123,9 @@ run_build_phase() {
     --network host \
     --ipc host \
     -v "$REPO_ROOT:/workspace/flash-attention-npu" \
+    "${cache_mount_args[@]}" \
     -e FLASH_ATTN_BUILD_VERSION="${FLASH_ATTN_BUILD_VERSION:-all}" \
+    -e FLASH_ATTN_SKIP_SUBMODULE_INIT=1 \
     -e GIT_CONFIG_GLOBAL=/tmp/gitconfig \
     -w /workspace/flash-attention-npu \
     "$CI_DOCKER_IMAGE" \
