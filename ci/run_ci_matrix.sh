@@ -10,7 +10,7 @@
 # 并发安全:
 #   - 各 combo 容器挂载同一仓库源码 (构建只读源码), 用 --build-base=/tmp/build 把
 #     构建产物隔离到容器内临时目录, 互不冲突。
-#   - 子模块由本脚本预先初始化一次 (单容器), 并对每个编译容器设
+#   - 子模块由本脚本在宿主机预先浅拉一次 (runner 磁盘缓存), 并对每个编译容器设
 #     FLASH_ATTN_SKIP_SUBMODULE_INIT=1 跳过 setup.py 内的 git submodule 调用,
 #     避免 N 个容器并发写 .git/config 损坏。
 #
@@ -23,6 +23,7 @@
 #   FLASH_ATTN_BUILD_VERSION (默认 all) 编译哪些 API 代 (all/v2/v3/v4)
 #   PROXY_CONFIG_FILE (默认 /home/FA_NPU_CI_DATA/proxy.conf)
 #   CI_GIT_PROXY / CI_GIT_PROXY_WHITELIST (可选, 覆盖 git 代理和白名单)
+#   SUBMODULE_CACHE_DIR   (默认 $GOLDEN_CACHE_HOST_DIR/submodule-cache)
 
 set -euo pipefail
 
@@ -124,31 +125,9 @@ else
 fi
 log "logs dir: $LOG_DIR"
 
-# ---------- 1. 预初始化子模块 (单容器一次) ----------
-first_img="$(combo_image "${COMBOS[0]}")"
-log "pre-init submodule csrc/catlass (once, via $first_img)"
-preinit_pidfile="$PID_DIR/preinit.pid"
-rm -f "$preinit_pidfile"
-set +e
-docker run --rm \
-  --label "com.flash-attention-npu.ci.scope=$CI_CONTAINER_SCOPE" \
-  "${privileged_args[@]}" \
-  "${GIT_PROXY_DOCKER_ARGS[@]}" \
-  --network host \
-  -v "$REPO_ROOT:/workspace/flash-attention-npu" \
-  -w /workspace/flash-attention-npu \
-  "$first_img" \
-  bash -lc 'git config --global --add safe.directory "*" && git submodule update --init --recursive csrc/catlass' &
-preinit_pid=$!
-printf '%s\n' "$preinit_pid" > "$preinit_pidfile"
-if wait "$preinit_pid"; then
-  preinit_rc=0
-else
-  preinit_rc=$?
-fi
-set -e
-rm -f "$preinit_pidfile"
-[ "$preinit_rc" -eq 0 ] || die "submodule pre-init failed"
+# ---------- 1. 预初始化子模块 (宿主机浅拉 + runner 缓存, 只做一次) ----------
+log "pre-init submodule csrc/catlass (shallow + runner cache)"
+bash "$SCRIPT_DIR/init_submodules.sh" "$REPO_ROOT"
 
 # ---------- 2. 每个 combo 一个容器, 并发编译 ----------
 build_one() {
