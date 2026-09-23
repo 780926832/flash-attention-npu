@@ -149,6 +149,17 @@ __global__ __aicpu__ uint32_t ComputeFAMetadata(void *args)
     tilingData->firstBatchTaskNum = firstBatchTaskNum;
     tilingData->totalTaskNum = totalTaskNum;
 
+    if (metaArgs->pagedKV != 0 && metaArgs->maskType == 4U && maxKvSeqlen > 0) {
+        // Match Host window normalization using actual lengths.
+        // For SWA, replace no-mask bounds with max(Q, KV), since -1 is a negative window.
+        const auto actualMask = DeriveFwdMask(false, metaArgs->windowSizeLeft,
+            metaArgs->windowSizeRight, maxQSeqlen, maxKvSeqlen);
+        const int64_t unbounded = maxQSeqlen > maxKvSeqlen ? maxQSeqlen : maxKvSeqlen;
+        tilingData->windowSizeLeft = actualMask.is_local ? actualMask.window_left : unbounded;
+        tilingData->windowSizeRight = actualMask.is_local ? actualMask.window_right :
+            (actualMask.is_causal ? 0 : unbounded);
+    }
+
     const uint64_t blockDim = static_cast<uint64_t>(metaArgs->blockDim);
     tilingData->qkOutSize = fa_metadata::Mm1OutSize(blockDim);
     tilingData->smOnlineOutSize = fa_metadata::SmOnlineOutSize(blockDim);

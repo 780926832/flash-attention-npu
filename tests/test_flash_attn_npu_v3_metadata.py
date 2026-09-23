@@ -1,4 +1,5 @@
 # Copyright (c) 2026, Minghua Shen.
+import math
 
 import pytest
 import torch
@@ -1562,4 +1563,24 @@ def test_flash_attn_with_kvcache_metadata_matches_tnd_3d_nonpaged():
         scale=scale,
         data_type=data_type,
         is_causal=False,
+    )
+
+
+@pytest.mark.skipif(not _is_ascend950(), reason="Ascend950 only")
+def test_flash_attn_kvcache_metadata_950_short_kv_swa():
+    q = torch.zeros((1, 1, 1, 64), dtype=torch.float16, device="npu")
+    k = torch.zeros((1, 128, 1, 64), dtype=q.dtype, device=q.device)
+    v = torch.zeros_like(k)
+    v[:, :2] = 1
+
+    # On 950, None auto-generates metadata using the actual KV length (2).
+    out, lse, *_ = flash_attn_with_kvcache(
+        q, k, v, cache_seqlens=_int32_npu([2]), page_table=_int32_npu([[0]]),
+        max_seqlen_q=1, causal=False, window_size=(3, 2), num_splits=0,
+        scheduler_metadata=None, return_softmax_lse=True,
+    )
+    # Q=K=0 gives equal scores: O=(1+1)/2 and LSE=log(exp(0)+exp(0)).
+    torch.testing.assert_close(out.cpu(), torch.ones_like(out.cpu()), rtol=0, atol=0)
+    torch.testing.assert_close(
+        lse.cpu(), torch.full_like(lse.cpu(), math.log(2)), rtol=0, atol=1e-6,
     )
