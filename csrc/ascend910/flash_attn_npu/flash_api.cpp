@@ -358,7 +358,6 @@ std::vector<at::Tensor> mha_fwd_kvcache(
     bool has_softcap = (softcap > 0.0f);
     at::Tensor softmaxlse =
         at::empty({batch_size, num_heads, seqlen_q}, at::device(at::kPrivateUse1).dtype(at::kFloat));
-    softmaxlse.fill_(std::numeric_limits<float>::infinity());
     AlibiSlopes alibi = set_params_alibi(alibi_slopes_, batch_size, num_heads);
 
     if (scheduler_metadata_.has_value()) {
@@ -571,7 +570,7 @@ std::vector<at::Tensor> mha_fwd_kvcache(
         blockTableDevice = static_cast<uint8_t*>(block_table.data_ptr());
     }
     auto oDevice = static_cast<uint8_t*>(out.data_ptr());
-    auto qSeqDevice = static_cast<uint8_t*>(seqlens_k.data_ptr());
+    auto qSeqDevice = nullptr;
     auto kvSeqDevice = static_cast<uint8_t*>(seqlens_k.data_ptr());
     auto workspaceDevice = static_cast<uint8_t*>(workspace_tensor.data_ptr());
     auto softmaxLseDevice = static_cast<uint8_t*>(softmaxlse.data_ptr());
@@ -706,10 +705,9 @@ std::vector<at::Tensor> mha_fwd(at::Tensor& q,                   // batch_size x
     }
 
     // init softmax lse — head-major BNS: {batch, num_heads, seqlen_q} (matches v3).
-    at::Tensor softmaxlse =
-        at::empty({batch_size, num_heads, seqlen_q}, at::device(at::kPrivateUse1).dtype(at::kFloat));
-    softmaxlse.fill_(std::numeric_limits<float>::infinity());
-    auto softmaxLseDevice = static_cast<uint8_t*>(const_cast<void*>(softmaxlse.data_ptr()));
+    at::Tensor softmaxlse = at::empty({batch_size, num_heads, seqlen_q},
+        at::device(at::kPrivateUse1).dtype(at::kFloat));
+    auto softmaxLseDevice = static_cast<uint8_t *>(const_cast<void *>(softmaxlse.data_ptr()));
 
     AlibiSlopes alibi = set_params_alibi(alibi_slopes_, batch_size, num_heads);
 
@@ -824,16 +822,14 @@ std::vector<at::Tensor> mha_fwd(at::Tensor& q,                   // batch_size x
     }
 
     // device ptrs
-    auto qDevice = static_cast<uint8_t*>(const_cast<void*>(q.data_ptr()));
-    auto kDevice = static_cast<uint8_t*>(const_cast<void*>(k.data_ptr()));
-    auto vDevice = static_cast<uint8_t*>(const_cast<void*>(v.data_ptr()));
-    at::Tensor seqlenq_gpu_tensor = at::full({batch_size}, seqlen_q).to(at::Device(at::kPrivateUse1)).to(at::kInt);
-    at::Tensor seqlenk_gpu_tensor = at::full({batch_size}, seqlen_k).to(at::Device(at::kPrivateUse1)).to(at::kInt);
-    auto qSeqDevice = static_cast<uint8_t*>(const_cast<void*>(seqlenq_gpu_tensor.data_ptr()));
-    auto kvSeqDevice = static_cast<uint8_t*>(const_cast<void*>(seqlenk_gpu_tensor.data_ptr()));
-    auto workspaceDevice = static_cast<uint8_t*>(const_cast<void*>(workspace_tensor.data_ptr()));
-    auto oDevice = static_cast<uint8_t*>(const_cast<void*>(out.data_ptr()));
-    uint8_t* blockTableDevice = nullptr; // will not be used in non-kvcahce fwd api
+    auto qDevice = static_cast<uint8_t *>(const_cast<void *>(q.data_ptr()));
+    auto kDevice = static_cast<uint8_t *>(const_cast<void *>(k.data_ptr()));
+    auto vDevice = static_cast<uint8_t *>(const_cast<void *>(v.data_ptr()));
+    uint8_t*  qSeqDevice = nullptr;
+    uint8_t* kvSeqDevice = nullptr;
+    auto workspaceDevice = static_cast<uint8_t *>(const_cast<void *>(workspace_tensor.data_ptr()));
+    auto oDevice = static_cast<uint8_t *>(const_cast<void *>(out.data_ptr()));
+    uint8_t * blockTableDevice = nullptr; // will not be used in non-kvcahce fwd api
 
     // run kernel
     // BSND, non-paged forward (IS_TND=false, paged_KV=false, no flash-decode).
@@ -1020,7 +1016,6 @@ std::vector<at::Tensor> mha_varlen_fwd(
     bool has_softcap = (softcap > 0.0f);
     // LSE output is head-major NT: {num_heads, T} (matches v3).
     at::Tensor softmaxlse = at::empty({num_heads, T}, at::device(at::kPrivateUse1).dtype(at::kFloat)); // lse
-    softmaxlse.fill_(std::numeric_limits<float>::infinity());
 
     AlibiSlopes alibi = set_params_alibi(alibi_slopes_, batch_size, num_heads);
 

@@ -244,7 +244,6 @@ std::vector<at::Tensor> mha_fwd(
     if (is_varlen_q) {
         softmaxlse = at::empty({num_heads, sizes[0]}, at::device(at::kPrivateUse1).dtype(at::kFloat));
     }
-    softmaxlse.fill_(std::numeric_limits<float>::infinity());
 
     // Derive the max KV length used to collapse the window. The explicit
     // scheduler-metadata path must NOT do a synchronous D2H copy here (NPU
