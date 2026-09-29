@@ -97,7 +97,7 @@ def _metadata(
         num_heads_kv=kv_heads,
         headdim=head_size,
         seqlens_q=seqlens_q,
-        seqlens_k=seqlens_k,
+        cache_seqlens=seqlens_k,
         qkv_dtype=data_type,
         page_size=page_size,
         causal=is_causal,

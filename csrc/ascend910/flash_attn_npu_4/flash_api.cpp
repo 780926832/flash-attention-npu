@@ -354,7 +354,11 @@ mha_fwd(at::Tensor q,   // (b, s_q, h, d) or (total_q, h, d) if there is cu_seql
         int32_t* seqlens_k_cpu = static_cast<int32_t *>(seqlenk_cpu_tensor.data_ptr());
         int32_t* seqlens_q_cpu = nullptr;
         at::Tensor seqlens_q_cpu_tensor;
-        if (is_varlen_q) {
+        if (seqused_q_.has_value()) {
+            // Host tiling follows the used lengths matching the AICPU path
+            seqlens_q_cpu_tensor = seqused_q_->to(at::Device(at::kCPU)).contiguous();
+            seqlens_q_cpu = static_cast<int32_t*>(seqlens_q_cpu_tensor.data_ptr());
+        } else if (is_varlen_q) {
             at::Tensor cu_q_cpu = cu_seqlens_q.to(at::Device(at::kCPU));
             seqlens_q_cpu_tensor = at::empty({batch_size}, cu_q_cpu.options());
             const int32_t* cu = static_cast<const int32_t*>(cu_q_cpu.data_ptr());
