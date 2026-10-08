@@ -80,6 +80,7 @@ def metadata_kwargs(api, causal, window_size):
         "cu_seqlens_k": None,
         "cu_seqlens_k_new": None,
         "seqused_q": None,
+        "seqlens_q": None,
         "cache_leftpad": None,
         "page_size": None,
         "max_seqlen_k_new": 0,
@@ -103,7 +104,7 @@ def metadata_kwargs(api, causal, window_size):
     check_required_parameters(
         sig,
         kwargs,
-        ignored=("cache_seqlens",),
+        ignored=("cache_seqlens", "seqlens_k"),
     )
 
     return kwargs
@@ -114,6 +115,11 @@ def run_metadata_compile_test(
     expected_sizes=None,
     tiling_only_metadata=False,
 ):
+    length_parameter = (
+        "seqlens_k"
+        if "seqlens_k" in inspect.signature(api.get_scheduler_metadata).parameters
+        else "cache_seqlens"
+    )
     cache_seqlens = torch.tensor(
         [16, 16],
         dtype=torch.int32,
@@ -139,7 +145,7 @@ def run_metadata_compile_test(
 
         def fn(cache):
             return api.get_scheduler_metadata(
-                cache_seqlens=cache,
+                **{length_parameter: cache},
                 **static_kwargs,
             )
 
