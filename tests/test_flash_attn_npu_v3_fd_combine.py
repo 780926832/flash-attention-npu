@@ -9,19 +9,20 @@ from flash_attn_npu_3 import flash_attn_with_kvcache
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-@pytest.mark.parametrize("batch,q_len,heads,kv_heads,dim,splits", [
-    (1, 1, 64, 1, 128, 0),  # Decode target: several AIV row tiles.
-    (2, 1, 8, 1, 128, 4),   # LSE head stride with multiple batches.
-    (1, 3, 10, 2, 192, 3),  # Tail head blocks and tiles crossing heads.
-    (2, 3, 6, 1, 59, 4),    # Packed partial O and TND output strides.
-    (1, 16, 8, 1, 64, 4),   # Maximum merged Q-head row count.
-    (1, 1, 1, 1, 1, 2),     # Only one source AIV has rows.
-    (1, 1, 8, 1, 256, 2),   # Maximum supported head dimension.
-    (2, 1, 5, 1, 59, 4),    # Uneven source AIV row ranges.
-    (2, 3, 6, 1, 65, 4),    # Different FP32 input and low-precision output strides.
-    (2, 1, 5, 1, 1, 4),     # Multi-row FP32 input stride of one 32-byte block.
+@pytest.mark.parametrize("batch,q_len,heads,kv_heads,dim,splits,kv_len", [
+    (1, 1, 64, 1, 128, 0, 2048),  # Decode target: parallel AIV row tiles.
+    (2, 1, 8, 1, 128, 4, 2048),   # LSE head stride with multiple batches.
+    (1, 3, 10, 2, 192, 3, 2048),  # Tail head blocks and tiles crossing heads.
+    (2, 3, 6, 1, 59, 4, 2048),    # Packed partial O and TND output strides.
+    (1, 16, 8, 1, 64, 4, 2048),   # Maximum merged Q-head row count.
+    (1, 1, 1, 1, 1, 2, 2048),     # Only one source AIV has rows.
+    (1, 1, 8, 1, 256, 2, 2048),   # Maximum supported head dimension.
+    (2, 1, 5, 1, 59, 4, 2048),    # Uneven source AIV row ranges.
+    (2, 3, 6, 1, 65, 4, 2048),    # Different input and output UB strides.
+    (2, 1, 5, 1, 1, 4, 2048),     # Multi-row FP32 input stride of one block.
+    (1, 16, 4, 1, 256, 0, 4096),   # Many auto splits span multiple UB load batches.
 ])
-def test_fd_combine_output_and_lse(dtype, batch, q_len, heads, kv_heads, dim, splits):
+def test_fd_combine_output_and_lse(dtype, batch, q_len, heads, kv_heads, dim, splits, kv_len):
     if "Ascend950" not in torch_npu.npu.get_device_name():
         pytest.skip("Ascend950 FD combine regression")
 
@@ -31,7 +32,7 @@ def test_fd_combine_output_and_lse(dtype, batch, q_len, heads, kv_heads, dim, sp
     q = torch.zeros((total_q, heads, dim), dtype=dtype)
     scores = torch.arange(total_q * heads).reshape(total_q, heads).float() / 128
     q[..., 0] = scores.to(dtype)
-    kv_len, page_size = 2048, 128
+    page_size = 128
     pages_per_batch = kv_len // page_size
     k = torch.ones((batch * pages_per_batch, page_size, kv_heads, dim), dtype=dtype)
     values = (torch.arange(batch * kv_heads).reshape(batch, kv_heads, 1).float() + 1

@@ -105,7 +105,7 @@ struct FAInferTilingData {
     uint32_t fdPartialCapacity;
     uint32_t fdRowCapacity;
     uint32_t fdLseSubStride;
-    uint32_t fdCombineBlockDim;
+    uint32_t fdCombineRowNum;
     uint32_t fdReserved;
     uint64_t fdPartialLseOffset;
     uint64_t fdPartialOOffset;
@@ -162,7 +162,7 @@ struct FAInferTilingData {
     uint32_t get_needCoreNum() const { return needCoreNum; }
     uint32_t get_flashDecodeFlag() const { return flashDecodeFlag; }
     uint32_t get_fdActiveCoreNum() const { return fdActiveCoreNum; }
-    uint32_t get_fdCombineBlockDim() const { return fdCombineBlockDim; }
+    uint32_t get_fdCombineRowNum() const { return fdCombineRowNum; }
 
     // Setter functions
     void set_numHeads(uint32_t value) { numHeads = value; }

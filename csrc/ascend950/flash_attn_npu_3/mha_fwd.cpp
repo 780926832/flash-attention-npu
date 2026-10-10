@@ -237,7 +237,6 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
     bool is_local = false;
     bool flashDecodeEnabled = false;
     uint32_t launchBlockDim = blockDim;
-    uint32_t combineBlockDim = 0U;
 
     if (scheduler_metadata_.has_value()) {
         auto schedMd = scheduler_metadata_.value();
@@ -371,7 +370,6 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
         flashDecodeEnabled = tilingData.flashDecodeFlag != 0U;
         if (flashDecodeEnabled) {
             launchBlockDim = tilingData.fdActiveCoreNum;
-            combineBlockDim = tilingData.fdCombineBlockDim;
         }
 
         at::Tensor tiling_cpu =
@@ -462,8 +460,8 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
 
     const FwdLaunchArgs fwdArgs{
         is_bf16, fmt, mask_category, paged_KV,
-        enableDN, return_softmax_lse, is_softcap, flashDecodeEnabled,
-        combineBlockDim, launchBlockDim, aclStream,
+        enableDN, return_softmax_lse, is_softcap,
+        launchBlockDim, aclStream,
         qDev, kDev, vDev, maskDevice, blockTableDev,
         oDev, lseDev, qSeqDev, kvSeqDev,
         seqUsedQDev, seqUsedKvDev,
