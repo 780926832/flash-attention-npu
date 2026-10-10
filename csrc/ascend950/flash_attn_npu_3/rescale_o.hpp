@@ -184,7 +184,7 @@ public:
                         int32_t delEndRow = 0,
                         uint32_t qSeqlen = 0,
                         uint32_t qSTileStart = 0,
-                        AscendC::GlobalTensor<ElementO> gPartialO = {},
+                        AscendC::GlobalTensor<float> gPartialO = {},
                         AscendC::GlobalTensor<float> gPartialLse = {},
                         bool writePartial = false,
                         uint32_t partialId = 0,
@@ -229,31 +229,6 @@ public:
         SetCrossCoreSync<4, PIPE_V>(pvReadyFlag);
         if (isLastKvSTile) {
             AscendC::PipeBarrier<PIPE_V>();
-            if (std::is_same<ElementO, bfloat16_t>::value) {
-                AscendC::Cast(
-                    goUbTensor16, goUbTensor32,
-                    AscendC::RoundMode::CAST_RINT,
-                    rowNumCurSubCore * colStride
-                    );
-            } else {
-                AscendC::Cast(
-                    goUbTensor16, goUbTensor32,
-                    AscendC::RoundMode::CAST_NONE,
-                    rowNumCurSubCore * colStride
-                    );
-            }
-            AscendC::PipeBarrier<PIPE_V>();
-            ZeroInvalidSwaRows(
-                rowNumCurSubCore, colStride, rowOffsetCurSubCore, qSBlockSize,
-                delStartRow, delEndRow, qSeqlen, qSTileStart);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
-            auto ubOLayoutTla = tla::MakeLayout(
-                tla::MakeShape(rowNumCurSubCore, colNumCurSubCore),
-                tla::MakeStride(colStride, tla::Int<1>{})
-            );
-            auto ubOTensorTla = tla::MakeTensor(goUbTensor16, ubOLayoutTla, Arch::PositionUB{});
             if (writePartial) {
                 ComputeLse((__ubuf__ float *)glUbTensor32.GetPhyAddr(),
                     (__ubuf__ float *)gmUbTensor32.GetPhyAddr(),
@@ -264,12 +239,17 @@ public:
                 const uint64_t partialORow =
                     (static_cast<uint64_t>(partialId) * fdRowCapacity +
                         rowOffsetCurSubCore) * colNumCurSubCore;
+                // Keep normalized partial O in FP32 through the combine.
+                // UB rows use colStride floats; GM rows are packed head_dim.
+                const uint32_t srcStride =
+                    (colStride - RoundUp(colNumCurSubCore, FLOAT_BLOCK_SIZE)) /
+                    FLOAT_BLOCK_SIZE;
                 AscendC::DataCopyPad(
-                    gPartialO[partialORow], goUbTensor16,
+                    gPartialO[partialORow], goUbTensor32,
                     AscendC::DataCopyExtParams(
                         rowNumCurSubCore,
-                        static_cast<uint32_t>(colNumCurSubCore * sizeof(ElementO)),
-                        0, 0, 0));
+                        static_cast<uint32_t>(colNumCurSubCore * sizeof(float)),
+                        srcStride, 0, 0));
                 const uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
                 const uint64_t partialLseRow =
                     (static_cast<uint64_t>(partialId) * 2U + subBlockIdx) *
@@ -284,8 +264,32 @@ public:
                 // waiting only at the next SubCoreCompute is too late.
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID4);
                 AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID4);
-            } else if (!skipOutput) {
-                copyUbToGmO(gOTensorTlaTile, ubOTensorTla);
+            } else {
+                if (std::is_same<ElementO, bfloat16_t>::value) {
+                    AscendC::Cast(
+                        goUbTensor16, goUbTensor32,
+                        AscendC::RoundMode::CAST_RINT,
+                        rowNumCurSubCore * colStride);
+                } else {
+                    AscendC::Cast(
+                        goUbTensor16, goUbTensor32,
+                        AscendC::RoundMode::CAST_NONE,
+                        rowNumCurSubCore * colStride);
+                }
+                AscendC::PipeBarrier<PIPE_V>();
+                ZeroInvalidSwaRows(
+                    rowNumCurSubCore, colStride, rowOffsetCurSubCore, qSBlockSize,
+                    delStartRow, delEndRow, qSeqlen, qSTileStart);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+                auto ubOLayoutTla = tla::MakeLayout(
+                    tla::MakeShape(rowNumCurSubCore, colNumCurSubCore),
+                    tla::MakeStride(colStride, tla::Int<1>{}));
+                auto ubOTensorTla = tla::MakeTensor(goUbTensor16, ubOLayoutTla, Arch::PositionUB{});
+                if (!skipOutput) {
+                    copyUbToGmO(gOTensorTlaTile, ubOTensorTla);
+                }
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID4);
@@ -747,7 +751,7 @@ public:
                     int32_t delEndRow = 0,
                     uint32_t qSeqlen = 0,
                     uint32_t qSTileStart = 0,
-                    AscendC::GlobalTensor<ElementO> gPartialO = {},
+                    AscendC::GlobalTensor<float> gPartialO = {},
                     AscendC::GlobalTensor<float> gPartialLse = {},
                     bool writePartial = false,
                     uint32_t partialId = 0,
