@@ -150,8 +150,8 @@ public:
         AscendC::GlobalTensor<float> gPartialLse;
         gPartialLse.SetGlobalBuffer((__gm__ float *)(
             params.workSpace + faiTilingData->fdPartialLseOffset));
-        AscendC::GlobalTensor<ElementO> gPartialO;
-        gPartialO.SetGlobalBuffer((__gm__ ElementO *)(
+        AscendC::GlobalTensor<float> gPartialO;
+        gPartialO.SetGlobalBuffer((__gm__ float *)(
             params.workSpace + faiTilingData->fdPartialOOffset));
         AscendC::GlobalTensor<ElementMask> gMask;
         gMask.SetGlobalBuffer((__gm__ ElementMask *)params.mask);

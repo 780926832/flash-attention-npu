@@ -407,6 +407,7 @@ namespace optiling{
 
         uint32_t partialStart = 0U;
         uint32_t combineCount = 0U;
+        uint32_t combineRowTiles = 0U;
         for (uint32_t base = 0; base < bases.size(); ++base) {
             int32_t firstCore = -1;
             uint32_t partialCount = 0U;
@@ -426,6 +427,15 @@ namespace optiling{
                     static_cast<int32_t>(partialStart),
                     static_cast<int32_t>(partialCount)};
                 partialStart += partialCount;
+                // Partial LSE rows are split between the two source AIVs.
+                // Keep each combine tile within one of those row ranges.
+                const uint32_t rows = bases[base].rowNum;
+                const uint32_t sub0Rows = std::min(rows,
+                    static_cast<uint32_t>(AlignUpU64(rows, 8U)) / 2U);
+                combineRowTiles += (sub0Rows + FD_COMBINE_ROW_TILE - 1U) /
+                    FD_COMBINE_ROW_TILE;
+                combineRowTiles += (rows - sub0Rows + FD_COMBINE_ROW_TILE - 1U) /
+                    FD_COMBINE_ROW_TILE;
             }
         }
 
@@ -437,7 +447,7 @@ namespace optiling{
         tiling.fdActiveCoreNum = activeCores;
         tiling.fdCombineTaskNum = combineCount;
         tiling.fdPartialTaskNum = partialStart;
-        tiling.fdCombineBlockDim = std::min(blockNum_, combineCount);
+        tiling.fdCombineBlockDim = std::min(blockNum_, (combineRowTiles + 1U) / 2U);
         uint32_t maxFdRows = 0U;
         for (const auto &base : bases) {
             maxFdRows = std::max(maxFdRows, base.rowNum);
@@ -454,7 +464,7 @@ namespace optiling{
         tiling.fdPartialOOffset = AlignUpU64(
             tiling.fdPartialLseOffset + partialLseSize, FD_WORKSPACE_ALIGNMENT);
         const uint64_t partialOSize = static_cast<uint64_t>(tiling.fdPartialCapacity) *
-            tiling.fdRowCapacity * faInfo_.embeddingSizeV * SIZE_OF_16BIT;
+            tiling.fdRowCapacity * faInfo_.embeddingSizeV * sizeof(float);
         tiling.fdWorkspaceEnd = tiling.fdPartialOOffset + partialOSize;
         tiling.workSpaceSize = tiling.fdWorkspaceEnd;
     }
