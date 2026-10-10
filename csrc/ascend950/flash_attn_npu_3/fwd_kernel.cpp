@@ -39,6 +39,7 @@
 #include "qk_matmul_DN.hpp"
 #include "pv_matmul.hpp"
 #include "tilingdata.h"
+#include "fd_combine.hpp"
 
 using namespace Catlass;
 using namespace tla;
@@ -837,6 +838,20 @@ public:
                 (qkL0BTotalStages_ + pvL0BTotalStages_);
         }
         ReleaseSyncFlags<4, 4, 4>();
+        if constexpr (!IsDN && qFormat == Format::TND &&
+                      kvcacheType == CacheMode::pagedCache &&
+                      maskCategory != MaskCategory::MASK_SWA) {
+            if (flashDecodeFlag_ != 0U) {
+                // All launched AIC/AIV blocks join after their partial DMAs
+                // complete. Reuse the main kernel's UB only after this barrier.
+                AscendC::PipeBarrier<PIPE_ALL>();
+                AscendC::SyncAll<false>();
+#ifdef __DAV_VEC__
+                FlashDecodeCombine950<ElementO> combine(resource);
+                combine(params);
+#endif
+            }
+        }
     }
 
     template <uint32_t QK_SM_MODE, uint32_t PV_RE_MODE, uint32_t SM_PV_MODE>

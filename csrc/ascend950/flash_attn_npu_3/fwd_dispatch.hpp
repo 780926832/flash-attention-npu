@@ -18,8 +18,6 @@ struct FwdLaunchArgs {
     bool enable_dn;    // use the FAInferDn fast path
     bool lse_mode;     // return softmax LSE
     bool has_softcap;  // softcap > 0: selects the softcap kernel instance
-    bool flash_decode; // launch the FD combine kernel after partials
-    uint32_t combine_block_dim;
     uint32_t block_dim;
     aclrtStream stream;
     uint8_t* q_device;
