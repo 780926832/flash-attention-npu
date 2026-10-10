@@ -26,8 +26,10 @@ public:
     static constexpr uint32_t FLOATS_PER_BLOCK = 8U;
     static constexpr uint32_t MAX_LSE_ELEMS = MAX_SPLIT_NUM * MAX_ROW_TILE;
     static constexpr uint32_t MAX_O_ELEMS = MAX_ROW_TILE * MAX_HEAD_DIM;
+    static constexpr uint32_t MAX_O_INPUT_ELEMS = MAX_SPLIT_NUM * MAX_HEAD_DIM;
+    using Resource = Catlass::Arch::Resource<Catlass::Arch::Ascend950>;
 
-    __aicore__ inline FlashDecodeCombine950()
+    __aicore__ inline explicit FlashDecodeCombine950(Resource &resource)
     {
         constexpr uint32_t LSE_OFFSET = 0U;
         constexpr uint32_t LSE_BROADCAST_OFFSET =
@@ -45,7 +47,7 @@ public:
         constexpr uint32_t O_INPUT_OFFSET =
             LSE_STORE_OFFSET + MAX_ROW_TILE * FLOATS_PER_BLOCK * sizeof(float);
         constexpr uint32_t O_ACC_OFFSET =
-            O_INPUT_OFFSET + MAX_O_ELEMS * sizeof(float);
+            O_INPUT_OFFSET + MAX_O_INPUT_ELEMS * sizeof(float);
         constexpr uint32_t REDUCE_TMP_OFFSET =
             O_ACC_OFFSET + MAX_O_ELEMS * sizeof(float);
 
@@ -78,6 +80,8 @@ public:
         const uint32_t subBlockNum = AscendC::GetSubBlockNum();
         const uint32_t aivIdx = AscendC::GetBlockIdx();
         const uint32_t aivNum = AscendC::GetBlockNum() * subBlockNum;
+        const uint32_t rowTile = Min(MAX_ROW_TILE,
+            Max(1U, CeilDiv(tiling->fdCombineRowNum, aivNum)));
 
         AscendC::GlobalTensor<float> partialLse;
         partialLse.SetGlobalBuffer((__gm__ float *)(
@@ -147,9 +151,9 @@ public:
             const uint32_t groupRows = qRows * qNBlockSize;
             const uint32_t sourceRowSplit =
                 Min(groupRows, RoundUp(groupRows, FLOATS_PER_BLOCK) / subBlockNum);
-            const uint32_t sub0Tiles = CeilDiv(sourceRowSplit, MAX_ROW_TILE);
+            const uint32_t sub0Tiles = CeilDiv(sourceRowSplit, rowTile);
             const uint32_t tilesPerTask = sub0Tiles +
-                CeilDiv(groupRows - sourceRowSplit, MAX_ROW_TILE);
+                CeilDiv(groupRows - sourceRowSplit, rowTile);
             const uint32_t qTokenBase =
                 static_cast<uint32_t>(actualQ.GetValue(batchIdx)) + qStart;
             const uint32_t partialCount = static_cast<uint32_t>(
@@ -166,8 +170,8 @@ public:
                     sourceSubBlock == 0U ? tile : tile - sub0Tiles;
                 const uint32_t sourceRows = sourceSubBlock == 0U ?
                     sourceRowSplit : groupRows - sourceRowSplit;
-                const uint32_t sourceLocalRow = tileInSubBlock * MAX_ROW_TILE;
-                const uint32_t rowCount = Min(MAX_ROW_TILE, sourceRows - sourceLocalRow);
+                const uint32_t sourceLocalRow = tileInSubBlock * rowTile;
+                const uint32_t rowCount = Min(rowTile, sourceRows - sourceLocalRow);
                 const uint32_t rowStart =
                     (sourceSubBlock == 0U ? 0U : sourceRowSplit) + sourceLocalRow;
                 const uint32_t rowCountAlign = RoundUp(rowCount, FLOATS_PER_BLOCK);
@@ -177,24 +181,20 @@ public:
                 const uint32_t tileElems = rowCount * dRound;
                 AscendC::Duplicate(oAccUb_, 0.0F, tileElems);
                 AscendC::PipeBarrier<PIPE_V>();
-                for (uint32_t partial = 0U; partial < partialCount; ++partial) {
+                const uint32_t inputPartialStride = rowCount * inputStride;
+                const uint32_t batchCapacity = MAX_O_INPUT_ELEMS / inputPartialStride;
+                for (uint32_t partial = 0U; partial < partialCount; partial += batchCapacity) {
+                    const uint32_t batchCount = Min(batchCapacity, partialCount - partial);
                     const uint64_t partialOOffset =
                         (static_cast<uint64_t>(firstPartial + partial) *
                             tiling->fdRowCapacity + rowStart) * headDim;
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
-                    AscendC::DataCopyPad(oInputUb_, partialO[partialOOffset],
-                        AscendC::DataCopyExtParams(
-                            rowCount, headDim * sizeof(float), 0, 0, 0),
-                        AscendC::DataCopyPadExtParams<float>(
-                            true, 0, inputStride - headDim, 0.0F));
-                    AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1);
-                    AccumulatePartial(
+                    LoadPartials(partialO, partialOOffset, batchCount, rowCount,
+                        headDim, inputStride, tiling->fdRowCapacity);
+                    AccumulatePartials(
                         (__ubuf__ float *)oAccUb_.GetPhyAddr(),
                         (__ubuf__ float *)oInputUb_.GetPhyAddr(),
                         (__ubuf__ float *)weightUb_.GetPhyAddr(partial * rowCountAlign),
-                        rowCount, headDim, inputStride, dRound);
+                        batchCount, rowCount, headDim, inputStride, dRound, rowCountAlign);
                     AscendC::PipeBarrier<PIPE_V>();
                 }
                 // Partial O and the weighted reduction stay FP32. Convert only
@@ -218,6 +218,38 @@ public:
 
 private:
 #ifdef __DAV_VEC__
+    __aicore__ inline void LoadPartials(
+        AscendC::GlobalTensor<float> &partialO, uint64_t offset,
+        uint32_t partialCount, uint32_t rowCount, uint32_t headDim,
+        uint32_t inputStride, uint32_t rowCapacity)
+    {
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID1);
+        if (headDim == inputStride) {
+            // Copy every split's row tile with one strided DMA. GM skips the
+            // other rows of each partial; UB packs the split tiles together.
+            AscendC::DataCopyPad(oInputUb_, partialO[offset],
+                AscendC::DataCopyExtParams(partialCount,
+                    rowCount * headDim * sizeof(float),
+                    (rowCapacity - rowCount) * headDim * sizeof(float), 0, 0),
+                AscendC::DataCopyPadExtParams<float>(false, 0, 0, 0.0F));
+        } else {
+            // Non-aligned dimensions need padding between UB rows. Queue all
+            // split copies before waiting rather than synchronizing each split.
+            for (uint32_t partial = 0U; partial < partialCount; ++partial) {
+                const uint64_t srcOffset = offset +
+                    static_cast<uint64_t>(partial) * rowCapacity * headDim;
+                AscendC::DataCopyPad(oInputUb_[partial * rowCount * inputStride],
+                    partialO[srcOffset],
+                    AscendC::DataCopyExtParams(rowCount, headDim * sizeof(float), 0, 0, 0),
+                    AscendC::DataCopyPadExtParams<float>(
+                        true, 0, inputStride - headDim, 0.0F));
+            }
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID1);
+    }
+
     __aicore__ inline void PrepareWeights(
         AscendC::GlobalTensor<float> &partialLse,
         uint32_t firstPartial, uint32_t partialCount,
@@ -275,25 +307,31 @@ private:
         AscendC::PipeBarrier<PIPE_V>();
     }
 
-    // Load weights in the vector pipeline, avoiding scalar UB reads and
-    // multiplying and adding each row in one VF. Keep separate Mul/Add
-    // instructions to preserve the original FP32 accumulation order.
-    __simd_vf__ static inline void AccumulatePartial(
+    // Accumulate a batch of splits in vector registers, preserving split order
+    // and separate FP32 Mul/Add instructions. Read/store the accumulator once
+    // per batch rather than once per split; weights never pass through scalars.
+    __simd_vf__ static inline void AccumulatePartials(
         __ubuf__ float *acc, __ubuf__ float *input, __ubuf__ float *weights,
-        uint32_t rowCount, uint32_t headDim, uint32_t inputStride, uint32_t accStride)
+        uint32_t partialCount, uint32_t rowCount, uint32_t headDim,
+        uint32_t inputStride, uint32_t accStride, uint32_t weightStride)
     {
         using namespace AscendC::MicroAPI;
         RegTensor<float> weightReg, inputReg, accReg;
         for (uint32_t row = 0U; row < rowCount; ++row) {
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(weightReg, weights + row);
             uint32_t remaining = headDim;
             for (uint32_t col = 0U; col < headDim; col += 64U) {
                 MaskReg mask = UpdateMask<float>(remaining);
                 const uint32_t accOffset = row * accStride + col;
-                LoadAlign<float, LoadDist::DIST_NORM>(inputReg, input + row * inputStride + col);
                 LoadAlign<float, LoadDist::DIST_NORM>(accReg, acc + accOffset);
-                Mul(inputReg, inputReg, weightReg, mask);
-                Add(accReg, accReg, inputReg, mask);
+                for (uint32_t partial = 0U; partial < partialCount; ++partial) {
+                    LoadAlign<float, LoadDist::DIST_BRC_B32>(weightReg,
+                        weights + partial * weightStride + row);
+                    const uint32_t inputOffset =
+                        (partial * rowCount + row) * inputStride + col;
+                    LoadAlign<float, LoadDist::DIST_NORM>(inputReg, input + inputOffset);
+                    Mul(inputReg, inputReg, weightReg, mask);
+                    Add(accReg, accReg, inputReg, mask);
+                }
                 StoreAlign<float, StoreDist::DIST_NORM_B32>(acc + accOffset, accReg, mask);
             }
         }
@@ -391,9 +429,12 @@ private:
     {
         return lhs < rhs ? lhs : rhs;
     }
+    __aicore__ inline static uint32_t Max(uint32_t lhs, uint32_t rhs)
+    {
+        return lhs > rhs ? lhs : rhs;
+    }
 #endif
 
-    Catlass::Arch::Resource<Catlass::Arch::Ascend950> resource;
     AscendC::LocalTensor<float> lseUb_;
     AscendC::LocalTensor<float> broadcastUb_;
     AscendC::LocalTensor<float> weightUb_;
@@ -406,18 +447,5 @@ private:
     AscendC::LocalTensor<ElementO> oOutUb_;
     AscendC::LocalTensor<uint8_t> reduceTmpUb_;
 };
-
-template <class InDtype>
-CATLASS_GLOBAL void FAFlashDecodeCombine(
-    GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR mask, GM_ADDR blockTables,
-    GM_ADDR o, GM_ADDR lse, GM_ADDR actualQseqlen, GM_ADDR actualKvseqlen,
-    GM_ADDR seqUsedQ, GM_ADDR seqUsedKv,
-    GM_ADDR workspace, GM_ADDR tiling, float scaleValue, float softcapValue, uint32_t numBlocks, uint32_t maxNumBlocksPerBatch)
-{
-    FAIKernelParams params{q, k, v, mask, blockTables,
-        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling, scaleValue, softcapValue, numBlocks, maxNumBlocksPerBatch};
-    FlashDecodeCombine950<InDtype> combine;
-    combine(params);
-}
 
 #endif
