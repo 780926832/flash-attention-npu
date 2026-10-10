@@ -40,6 +40,7 @@ struct splitNode {
 
 constexpr uint32_t MAX_FD_ACTIVE_CORE_NUM = 32U;
 constexpr uint32_t MAX_FD_COMBINE_TASK_NUM = 32U;
+constexpr uint32_t FD_COMBINE_ROW_TILE = 8U;
 
 struct FdDecodeSchedule {
     int32_t baseTaskStart;
