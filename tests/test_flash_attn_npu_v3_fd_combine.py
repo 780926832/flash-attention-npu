@@ -93,3 +93,51 @@ def test_fd_combine_keeps_partial_o_fp32(dtype, kv_len, return_lse):
             result[1].cpu(), torch.full((heads, 1), torch.log(torch.tensor(float(kv_len)))),
             atol=2e-6, rtol=0,
         )
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("return_lse", [False, True])
+@pytest.mark.parametrize("splits,logit_offset", [
+    (3, 0.0),       # Uneven splits and padded reduction lanes.
+    (16, 512.0),    # Large common offset must not enter Exp directly.
+    (0, -512.0),    # Automatic splitting with large negative logits.
+    (28, 128.0),    # Maximum physical split count on the target device.
+])
+def test_fd_combine_nonuniform_weights(dtype, return_lse, splits, logit_offset):
+    if "Ascend950" not in torch_npu.npu.get_device_name():
+        pytest.skip("Ascend950 FD combine regression")
+
+    heads, dim, kv_len, page_size = 8, 64, 8192, 128
+    q = torch.zeros((1, heads, dim), dtype=dtype)
+    q[..., 0] = 1
+    k = torch.zeros((kv_len, 1, dim), dtype=dtype)
+    # Page-dependent scores give the partitions unequal softmax mass. Only
+    # one Q/K component is nonzero, making the FP32 score oracle exact.
+    logits = ((torch.arange(kv_len) // page_size) % 9 - 4).float() * 4
+    k[:, 0, 0] = (logits + logit_offset).to(dtype)
+    gen = torch.Generator().manual_seed(20261012)
+    v = (torch.rand((kv_len, 1, dim), generator=gen) * 2 - 1).to(dtype)
+    v[..., 0] = 1  # A constant channel also checks that the weights sum to one.
+    scores = q[0].float() @ k[:, 0].float().T
+    expected = (scores.softmax(dim=-1) @ v[:, 0].float()).unsqueeze(0)
+    expected_lse = scores.logsumexp(dim=-1)[:, None]
+    table = torch.arange(kv_len // page_size, dtype=torch.int32, device="npu")[None]
+    lengths = torch.tensor([kv_len], dtype=torch.int32, device="npu")
+    cu_q = torch.tensor([0, 1], dtype=torch.int32, device="npu")
+
+    result = flash_attn_with_kvcache(
+        q.npu(), k.reshape(-1, page_size, 1, dim).npu(),
+        v.reshape(-1, page_size, 1, dim).npu(),
+        cache_seqlens=lengths, page_table=table, cu_seqlens_q=cu_q,
+        max_seqlen_q=1, softmax_scale=1.0, num_splits=splits,
+        return_softmax_lse=return_lse,
+    )
+    out = (result[0] if return_lse else result).cpu()
+    torch.testing.assert_close(
+        out.float(), expected,
+        atol=2e-4 if dtype == torch.bfloat16 else 3e-5,
+        rtol=8e-3 if dtype == torch.bfloat16 else 2e-3,
+    )
+    torch.testing.assert_close(out[..., 0], torch.ones_like(out[..., 0]), atol=0, rtol=0)
+    if return_lse:
+        torch.testing.assert_close(result[1].cpu(), expected_lse, atol=1e-4, rtol=0)

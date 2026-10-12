@@ -4,6 +4,8 @@
 
 本记录对照 FA NPU 的 Ascend950 v3 FD 路径与 FIA 的 `FiaBlockVecFlashDecode`，包含 FIA 实际调用的权重计算和 O 规约 VF。结论来自源码检查，本次没有重新编译、运行精度测试或采集性能；优化收益均需后续实测。
 
+后续验证：建议 1 已实现并完成精度与性能测试，见[复用 Exp 结果的优化记录](fa_fd_reuse_exp_optimization_20261012.md)。下文保留优化前的源码对照快照。
+
 ## 1. 对照版本与代码入口
 
 | 仓库 | 检查时 HEAD | 对照范围 |
