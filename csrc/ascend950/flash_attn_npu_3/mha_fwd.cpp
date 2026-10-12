@@ -396,10 +396,6 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
     if (return_softmax_lse) {
         softmaxlse.fill_(std::numeric_limits<float>::infinity());
     }
-    at::Tensor fd_lse;
-    if (flashDecodeEnabled && !return_softmax_lse) {
-        fd_lse = at::empty({num_heads, sizes[0]}, at::device(at::kPrivateUse1).dtype(at::kFloat));
-    }
     at::Tensor workspace;
     if (flashDecodeEnabled) {
         workspace =
@@ -419,10 +415,10 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
     auto kDev = static_cast<uint8_t*>(k.data_ptr());
     auto vDev = static_cast<uint8_t*>(v.data_ptr());
     auto oDev = static_cast<uint8_t*>(out.data_ptr());
-    // FD combine always materializes LSE for the numerically stable merge,
-    // even when the public API does not return it.
+    // FD uses workspace partial LSE for the stable merge. The final LSE
+    // pointer is used only by specializations that return softmax LSE.
     auto lseDev = return_softmax_lse ? static_cast<uint8_t*>(softmaxlse.data_ptr())
-                                     : (flashDecodeEnabled ? static_cast<uint8_t*>(fd_lse.data_ptr()) : oDev);
+                                     : oDev;
     uint8_t* wsDev = nullptr;
     if (flashDecodeEnabled) {
         wsDev = static_cast<uint8_t*>(workspace.data_ptr());

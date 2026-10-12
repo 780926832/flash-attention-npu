@@ -17,7 +17,7 @@
 #include "tilingdata.h"
 #include "kernel_common.hpp"
 
-template <class ElementO>
+template <class ElementO, bool OutputLse>
 class FlashDecodeCombine950 {
 public:
     static constexpr uint32_t MAX_SPLIT_NUM = MAX_FD_ACTIVE_CORE_NUM;
@@ -92,7 +92,9 @@ public:
         AscendC::GlobalTensor<ElementO> output;
         output.SetGlobalBuffer((__gm__ ElementO *)params.o);
         AscendC::GlobalTensor<float> outputLse;
-        outputLse.SetGlobalBuffer((__gm__ float *)params.lse);
+        if constexpr (OutputLse) {
+            outputLse.SetGlobalBuffer((__gm__ float *)params.lse);
+        }
         AscendC::GlobalTensor<int32_t> actualQ;
         actualQ.SetGlobalBuffer((__gm__ int32_t *)params.actualQseqlen);
         AscendC::GlobalTensor<int32_t> seqUsedQ;
@@ -103,7 +105,8 @@ public:
         const uint32_t inputStride = RoundUp(headDim, FLOATS_PER_BLOCK);
         // Keep the accumulator padded for the final low-precision output DMA.
         const uint32_t dRound = RoundUp(headDim, 32U / sizeof(ElementO));
-        const uint32_t totalQ = static_cast<uint32_t>(actualQ.GetValue(tiling->batch));
+        const uint32_t totalQ = OutputLse ?
+            static_cast<uint32_t>(actualQ.GetValue(tiling->batch)) : 0U;
         uint32_t workBase = 0U;
         for (uint32_t combineIdx = 0U;
              combineIdx < tiling->fdCombineTaskNum; ++combineIdx) {
@@ -207,8 +210,10 @@ public:
                 AscendC::PipeBarrier<PIPE_V>();
                 StoreOutput(output, oOutUb_, rowStart, rowCount, qRows,
                     qHeadStart, qTokenBase, tiling->numHeads, headDim, dRound);
-                StoreLse(outputLse, rowStart, rowCount, qRows,
-                    qHeadStart, qTokenBase, totalQ);
+                if constexpr (OutputLse) {
+                    StoreLse(outputLse, rowStart, rowCount, qRows,
+                        qHeadStart, qTokenBase, totalQ);
+                }
             }
             workBase += tilesPerTask;
         }

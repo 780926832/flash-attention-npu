@@ -449,8 +449,13 @@ namespace optiling{
         tiling.fdLseSubStride = static_cast<uint32_t>(AlignUpU64(
             (tiling.fdRowCapacity + 1U) / 2U, 8U));
 
-        const uint64_t pipelineEnd = tiling.workSpaceSize;
-        tiling.fdPartialLseOffset = AlignUpU64(pipelineEnd, FD_WORKSPACE_ALIGNMENT);
+        // The Ascend950 FD pipeline keeps QK, softmax, PV and rescale buffers
+        // on chip. Its GM workspace only needs the partial LSE and O regions.
+        tiling.set_qkOutSize(0U);
+        tiling.set_smOnlineOutSize(0U);
+        tiling.set_pvOutSize(0U);
+        tiling.set_UpdateSize(0U);
+        tiling.fdPartialLseOffset = 0U;
         const uint64_t partialLseSize = static_cast<uint64_t>(tiling.fdPartialCapacity) *
             2U * tiling.fdLseSubStride * sizeof(float);
         tiling.fdPartialOOffset = AlignUpU64(
