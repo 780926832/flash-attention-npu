@@ -290,15 +290,17 @@ private:
         AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, false>(
             lseSumUb_, weightUb_, reduceTmpUb_, reduceShape, true);
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Ln(globalLseUb_, lseSumUb_, rowCountAlign);
+        // Reuse u_i = exp(L_i - max(L)) and normalize in FP32. Computing
+        // exp(L_i - globalLse) again adds work and another rounding path.
+        BroadcastRows(lseSumUb_, rowCountAlign, partialCountAlign);
+        AscendC::Div(weightUb_, weightUb_, broadcastUb_, calcElems);
         AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Add(globalLseUb_, globalLseUb_, lseMaxUb_, rowCountAlign);
-        AscendC::PipeBarrier<PIPE_V>();
-        BroadcastRows(globalLseUb_, rowCountAlign, partialCountAlign);
-        AscendC::Sub(weightUb_, lseUb_, broadcastUb_, calcElems);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Exp(weightUb_, weightUb_, calcElems);
-        AscendC::PipeBarrier<PIPE_V>();
+        if constexpr (OutputLse) {
+            AscendC::Ln(globalLseUb_, lseSumUb_, rowCountAlign);
+            AscendC::PipeBarrier<PIPE_V>();
+            AscendC::Add(globalLseUb_, globalLseUb_, lseMaxUb_, rowCountAlign);
+            AscendC::PipeBarrier<PIPE_V>();
+        }
     }
 
     __aicore__ inline void BroadcastRows(
