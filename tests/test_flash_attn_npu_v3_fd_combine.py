@@ -141,3 +141,50 @@ def test_fd_combine_nonuniform_weights(dtype, return_lse, splits, logit_offset):
     torch.testing.assert_close(out[..., 0], torch.ones_like(out[..., 0]), atol=0, rtol=0)
     if return_lse:
         torch.testing.assert_close(result[1].cpu(), expected_lse, atol=1e-4, rtol=0)
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("return_lse", [False, True])
+def test_fd_combine_weight_rows_and_reuse(dtype, return_lse):
+    if "Ascend950" not in torch_npu.npu.get_device_name():
+        pytest.skip("Ascend950 FD combine regression")
+
+    batch, q_len, heads, dim, kv_len, page_size = 2, 3, 6, 65, 2048, 128
+    lengths_cpu = [kv_len, kv_len - 2 * page_size]
+    q = torch.zeros((batch * q_len, heads, dim), dtype=dtype)
+    q[..., 0] = (torch.arange(batch * q_len * heads).reshape(-1, heads).float() / 16 - 1).to(dtype)
+    k = torch.zeros((batch, kv_len, 1, dim), dtype=dtype)
+    logits = ((torch.arange(kv_len) // page_size) % 7 - 3).float() * 2
+    gen = torch.Generator().manual_seed(20261013)
+    values = (torch.rand(k.shape, generator=gen) - 0.5).to(dtype)
+    q_npu = q.npu()
+    table = torch.arange(batch * kv_len // page_size, dtype=torch.int32, device="npu").reshape(batch, -1)
+    lengths = torch.tensor(lengths_cpu, dtype=torch.int32, device="npu")
+    cu_q = torch.arange(batch + 1, dtype=torch.int32, device="npu") * q_len
+
+    # Different row scores and successive input changes expose stale VF
+    # stores, incorrect row masks, and unintended cross-row broadcasting.
+    for iteration in range(3):
+        k[:, :, 0, 0] = (logits + iteration * 0.5).to(dtype)
+        v = (values.float() * (-1 if iteration == 1 else 1) + iteration * 0.25).to(dtype)
+        expected_out, expected_lse = [], []
+        for bi, length in enumerate(lengths_cpu):
+            query = q[bi * q_len:(bi + 1) * q_len].float().transpose(0, 1)
+            scores = query @ k[bi, :length, 0].float().T
+            expected_out.append((scores.softmax(dim=-1) @ v[bi, :length, 0].float()).transpose(0, 1))
+            expected_lse.append(scores.logsumexp(dim=-1))
+        result = flash_attn_with_kvcache(
+            q_npu, k.reshape(-1, page_size, 1, dim).npu(),
+            v.reshape(-1, page_size, 1, dim).npu(),
+            cache_seqlens=lengths, page_table=table, cu_seqlens_q=cu_q,
+            max_seqlen_q=q_len, softmax_scale=1.0, num_splits=3,
+            return_softmax_lse=return_lse,
+        )
+        out = (result[0] if return_lse else result).cpu().float()
+        torch.testing.assert_close(
+            out, torch.cat(expected_out),
+            atol=2e-4 if dtype == torch.bfloat16 else 3e-5,
+            rtol=8e-3 if dtype == torch.bfloat16 else 2e-3,
+        )
+        if return_lse:
+            torch.testing.assert_close(result[1].cpu(), torch.cat(expected_lse, dim=1), atol=1e-5, rtol=0)
