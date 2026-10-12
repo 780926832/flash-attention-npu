@@ -128,9 +128,7 @@ struct FAMetadataArgs {
     uint32_t numHeadsK;
     uint32_t embeddingSize;
     uint32_t embeddingSizeV;
-    uint32_t numBlocks;
     uint32_t blockSize;
-    uint32_t maxNumBlocksPerBatch;
     uint32_t maxQSeqlen;
     uint32_t maskType;
     int32_t windowSizeLeft;
@@ -139,8 +137,6 @@ struct FAMetadataArgs {
     uint32_t isVarlen;
     uint32_t isVarlenKv;
     uint32_t pagedKV;
-    float softmaxScale;
-    float softcapValue;
 };
 
 #endif

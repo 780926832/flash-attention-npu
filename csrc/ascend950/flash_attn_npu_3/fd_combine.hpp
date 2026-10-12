@@ -447,10 +447,13 @@ CATLASS_GLOBAL void FAFlashDecodeCombine(
     GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR mask, GM_ADDR blockTables,
     GM_ADDR o, GM_ADDR lse, GM_ADDR actualQseqlen, GM_ADDR actualKvseqlen,
     GM_ADDR seqUsedQ, GM_ADDR seqUsedKv,
-    GM_ADDR workspace, GM_ADDR tiling)
+    GM_ADDR workspace, GM_ADDR tiling,
+    float scaleValue, float softcapValue,
+    uint32_t numBlocks, uint32_t maxNumBlocksPerBatch)
 {
     FAIKernelParams params{q, k, v, mask, blockTables,
-        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling};
+        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling,
+        scaleValue, softcapValue, numBlocks, maxNumBlocksPerBatch};
     FlashDecodeCombine950<InDtype> combine;
     combine(params);
 }

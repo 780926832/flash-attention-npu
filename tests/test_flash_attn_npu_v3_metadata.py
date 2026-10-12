@@ -356,13 +356,13 @@ def metadata_spy_950(monkeypatch):
     from flash_attn_npu_3 import flash_attn_npu_interface_950 as interface
 
     calls = []
-    original = interface.get_scheduler_metadata
+    original = interface._get_scheduler_metadata_op
 
     def _spy(*args, **kwargs):
         calls.append((args, kwargs))
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(interface, "get_scheduler_metadata", _spy)
+    monkeypatch.setattr(interface, "_get_scheduler_metadata_op", _spy)
     return calls
 
 
@@ -1602,12 +1602,12 @@ def test_flash_attn_with_kvcache_metadata_matches(data_type):
         num_heads_q=heads,
         num_heads_kv=kv_heads,
         headdim=head,
-        seqlens_q=None,
+        cu_seqlens_q=None,
         cache_seqlens=cache_seqlens,
         qkv_dtype=data_type,
         page_size=block_size,
         causal=False,
-        softmax_scale=scale,
+        has_softcap=False,
     )
     output_npu = flash_attn_with_kvcache(
         query,
@@ -1662,6 +1662,97 @@ def test_flash_attn_with_kvcache_metadata_matches(data_type):
 
 
 @pytest.mark.skipif(not _is_ascend950(), reason="Ascend950 only")
+@pytest.mark.parametrize("data_type", [torch.bfloat16, torch.float16])
+def test_flash_attn_kvcache_metadata_reuse_scale_softcap_950(data_type):
+    """One 950 metadata buffer must serve several (softmax_scale, softcap) pairs."""
+    batch, q_seqlen, kv_seqlen, heads, kv_heads, head = 2, 16, 128, 4, 2, 128
+    block_size = 128
+    query = _rand_npu((batch, q_seqlen, heads, head), data_type, SMALL_RANGE)
+    key_cache, value_cache, page_table = _make_paged_cache(
+        batch, kv_seqlen, kv_heads, head, block_size, data_type
+    )
+    cache_seqlens = _int32_npu([kv_seqlen] * batch)
+    base_scale = 1.0 / (head**0.5)
+
+    scheduler_metadata = get_scheduler_metadata(
+        batch_size=batch,
+        max_seqlen_q=q_seqlen,
+        max_seqlen_k=kv_seqlen,
+        num_heads_q=heads,
+        num_heads_kv=kv_heads,
+        headdim=head,
+        cache_seqlens=cache_seqlens,
+        qkv_dtype=data_type,
+        page_size=block_size,
+        causal=False,
+        has_softcap=False,
+    )
+    metadata_before = scheduler_metadata.cpu().clone()
+
+    key_cache_cpu = key_cache.detach().cpu()
+    value_cache_cpu = value_cache.detach().cpu()
+    page_table_cpu = page_table.cpu()
+    key_cpu = torch.stack(
+        [
+            _paged_kv_for_batch(
+                key_cache_cpu, value_cache_cpu, page_table_cpu, idx, kv_seqlen, block_size
+            )[0]
+            for idx in range(batch)
+        ],
+        dim=0,
+    )
+    value_cpu = torch.stack(
+        [
+            _paged_kv_for_batch(
+                key_cache_cpu, value_cache_cpu, page_table_cpu, idx, kv_seqlen, block_size
+            )[1]
+            for idx in range(batch)
+        ],
+        dim=0,
+    )
+
+    for call_scale, call_softcap in (
+        (None, 0.0),
+        (base_scale * 0.5, 30.0),
+        (base_scale * 1.5, 60.0),
+    ):
+        output_npu = flash_attn_with_kvcache(
+            query,
+            key_cache,
+            value_cache,
+            cache_seqlens=cache_seqlens,
+            page_table=page_table,
+            max_seqlen_q=q_seqlen,
+            softmax_scale=call_scale,
+            causal=False,
+            window_size=WINDOW_SIZE,
+            softcap=call_softcap,
+            rotary_interleaved=False,
+            scheduler_metadata=scheduler_metadata,
+            num_splits=0,
+        )
+        effective_scale = base_scale if call_scale is None else call_scale
+        _assert_bsnd_matches_ref(
+            output_npu,
+            None,
+            query,
+            (key_cpu, value_cpu),
+            batch_size=batch,
+            q_seqlen=q_seqlen,
+            num_heads=heads,
+            head_size=head,
+            scale=effective_scale,
+            data_type=data_type,
+            is_causal=False,
+            softcap=call_softcap,
+        )
+
+    assert torch.equal(scheduler_metadata.cpu(), metadata_before), (
+        "scheduler_metadata must be reused unchanged across scale/softcap"
+    )
+
+
+@pytest.mark.skipif(not _is_ascend950(), reason="Ascend950 only")
 def test_flash_attn_with_kvcache_metadata_matches_tnd_3d_nonpaged():
     # 3D TND kvcache (total_tokens, kv_heads, head_dim): regression for the
     # wrapper assuming a 4D cache when auto-generating scheduler_metadata.
@@ -1681,14 +1772,14 @@ def test_flash_attn_with_kvcache_metadata_matches_tnd_3d_nonpaged():
     scheduler_metadata = get_scheduler_metadata(
         batch_size=batch,
         max_seqlen_q=q_seqlen,
+        max_seqlen_k=kv_seqlen,
         num_heads_q=heads,
         num_heads_kv=kv_heads,
         headdim=head,
-        seqlens_q=q_seqlens,
+        cu_seqlens_q=cu_seqlens_q,
         cache_seqlens=cache_seqlens,
         qkv_dtype=data_type,
         causal=False,
-        softmax_scale=scale,
     )
     output_npu = flash_attn_with_kvcache(
         query,

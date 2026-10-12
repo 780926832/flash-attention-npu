@@ -61,11 +61,7 @@ def test_flash_attn_kvcache_graph(is_causal):
     cache_seqlens = torch.tensor([KV_SEQLEN], dtype=torch.int32).npu()
     cu_seqlens_q = torch.tensor([0, Q_SEQLEN], dtype=torch.int32).npu()
     page_table = torch.tensor([[0]], dtype=torch.int32).npu()
-    metadata_q_lengths = (
-        {"cu_seqlens_q": cu_seqlens_q}
-        if "Ascend910" in torch_npu.npu.get_device_name()
-        else {"seqlens_q": seqlens_q}
-    )
+    metadata_q_lengths = {"cu_seqlens_q": cu_seqlens_q}
 
     scheduler_metadata = get_scheduler_metadata(
         batch_size=BATCH_SIZE,

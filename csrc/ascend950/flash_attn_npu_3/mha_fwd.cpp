@@ -460,6 +460,10 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
     const bool enableDN =
         !flashDecodeEnabled && (!is_causal) && (!is_local) && (head_size_q <= 256) && (head_size_v <= 256);
 
+    const float softmax_scale =
+        softmax_scale_.value_or(1.0f / std::sqrt(static_cast<float>(head_size_q)));
+    const float scale_value = is_softcap ? softmax_scale / softcap : softmax_scale;
+
     const FwdLaunchArgs fwdArgs{
         is_bf16, fmt, mask_category, paged_KV,
         enableDN, return_softmax_lse, is_softcap, flashDecodeEnabled,
@@ -467,7 +471,9 @@ std::vector<at::Tensor> mha_fwd(at::Tensor q, at::Tensor k, at::Tensor v, std::o
         qDev, kDev, vDev, maskDevice, blockTableDev,
         oDev, lseDev, qSeqDev, kvSeqDev,
         seqUsedQDev, seqUsedKvDev,
-        wsDev, tilDev};
+        wsDev, tilDev, scale_value, softcap,
+        static_cast<uint32_t>(num_blocks),
+        static_cast<uint32_t>(max_num_blocks_per_seq)};
     auto launch_fa_infer = [fwdArgs, seqused_q_, seqused_k_]() -> int {
         launch_fwd(fwdArgs);
         return 0;

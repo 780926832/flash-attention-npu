@@ -164,8 +164,8 @@ public:
         embedV_ = faiTilingData->embeddingSizeV;
         firstBatchTaskNum_ = faiTilingData->firstBatchTaskNum;
         totalTaskNum_ = faiTilingData->totalTaskNum;
-        scaleValue_ = faiTilingData->scaleValue;
-        softcapValue_ = faiTilingData->softcapValue;
+        scaleValue_ = params.scaleValue;
+        softcapValue_ = params.softcapValue;
         // base tile info
         qBaseTile_ = faiTilingData->qBaseTile;
         kvBaseTile_ = faiTilingData->kvBaseTile;
@@ -174,9 +174,9 @@ public:
         // aligned seqlen q & kv
         qSeqlenAligned_ = faiTilingData->qSeqlenAligned;
         kvSeqlenAligned_ = faiTilingData->kvSeqlenAligned;
-        maxNumBlocksPerBatch_ = faiTilingData->maxNumBlocksPerBatch;
+        maxNumBlocksPerBatch_ = params.maxNumBlocksPerBatch;
         blockSize_ = faiTilingData->blockSize;
-        numBlocks_ = faiTilingData->numBlocks;
+        numBlocks_ = params.numBlocks;
         qkL1TileM_ = faiTilingData->qkL1TileM;
         qkL1TileN_ = faiTilingData->qkL1TileN;
         qkL1TileKLeft_ = faiTilingData->qkL1TileKLeft;
@@ -1038,7 +1038,9 @@ CATLASS_GLOBAL void FAInfer(
     GM_ADDR o, GM_ADDR lse, GM_ADDR actualQseqlen, GM_ADDR actualKvseqlen,
     GM_ADDR seqUsedQ, GM_ADDR seqUsedKv,
     GM_ADDR workspace,
-    GM_ADDR tiling
+    GM_ADDR tiling,
+    float scaleValue, float softcapValue,
+    uint32_t numBlocks, uint32_t maxNumBlocksPerBatch
 ) {
     using ArchTag = Arch::Ascend950;
     using ElementQ = InDtype;
@@ -1100,7 +1102,8 @@ CATLASS_GLOBAL void FAInfer(
     using Kernel = FAIKernel950<
         BlockMmadQK, EpilogueOnlineSoftmax, BlockMmadPV, EpilogueRescaleO, qFormat, kvFormat, kvcacheType, kvcacheShape, maskCategory, cacheLayout, false, LseMode>;
     FAIKernelParams params{q, k, v, mask, blockTables,
-        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling};
+        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling,
+        scaleValue, softcapValue, numBlocks, maxNumBlocksPerBatch};
     Kernel faInfer;
     faInfer(params);
 }
@@ -1114,7 +1117,9 @@ CATLASS_GLOBAL void FAInferDn(
     GM_ADDR o, GM_ADDR lse, GM_ADDR actualQseqlen, GM_ADDR actualKvseqlen,
     GM_ADDR seqUsedQ, GM_ADDR seqUsedKv,
     GM_ADDR workspace,
-    GM_ADDR tiling
+    GM_ADDR tiling,
+    float scaleValue, float softcapValue,
+    uint32_t numBlocks, uint32_t maxNumBlocksPerBatch
 ) {
     using ArchTag = Arch::Ascend950;
     using ElementQ = InDtype;
@@ -1169,7 +1174,8 @@ CATLASS_GLOBAL void FAInferDn(
     using Kernel = FAIKernel950<
         BlockMmadQK, EpilogueOnlineSoftmax, BlockMmadPV, EpilogueRescaleO, qFormat, kvFormat, kvcacheType, kvcacheShape, maskCategory, cacheLayout, true, LseMode>;
     FAIKernelParams params{q, k, v, mask, blockTables,
-        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling};
+        actualQseqlen, actualKvseqlen, seqUsedQ, seqUsedKv, o, lse, workspace, tiling,
+        scaleValue, softcapValue, numBlocks, maxNumBlocksPerBatch};
     Kernel faInfer;
     faInfer(params);
 }

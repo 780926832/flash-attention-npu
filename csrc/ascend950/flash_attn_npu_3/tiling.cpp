@@ -156,7 +156,6 @@ namespace optiling{
 
         faTilingData.set_embeddingSize(static_cast<uint32_t>(faInfo_.embeddingSize));
         faTilingData.set_embeddingSizeV(static_cast<uint32_t>(faInfo_.embeddingSizeV));
-        faTilingData.set_numBlocks(static_cast<uint32_t>(faInfo_.numBlocks));
         if (faInfo_.pagedCacheFlag) {
             faTilingData.set_blockSize(static_cast<uint32_t>(faInfo_.blockSize));
         } else {
@@ -164,10 +163,7 @@ namespace optiling{
         }
         faTilingData.set_maxQSeqlen(faInfo_.maxQSeqlen);
         faTilingData.set_maxKvSeqlen(faInfo_.maxKvSeqlen);
-        faTilingData.set_maxNumBlocksPerBatch(faInfo_.maxNumBlocksPerBatch);
         faTilingData.set_maskType(static_cast<uint32_t>(faInfo_.maskType));
-        faTilingData.set_scaleValue(faInfo_.scaleValue);
-        faTilingData.set_softcapValue(faInfo_.softcapValue);
         faTilingData.set_sparseMode(faInfo_.sparseMode);
         faTilingData.set_cacheLayout(0U);
         faTilingData.set_flashDecodeFlag(faInfo_.flashDecodeFlag ? 1U : 0U);

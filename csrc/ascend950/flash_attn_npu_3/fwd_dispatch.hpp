@@ -35,6 +35,10 @@ struct FwdLaunchArgs {
     uint8_t *seq_used_kv_device;   // per-batch used KV lengths (seqused_k); nullptr when absent
     uint8_t *workspace_device;
     uint8_t *tiling_device;
+    float scale_value;
+    float softcap_value;
+    uint32_t num_blocks;
+    uint32_t max_num_blocks_per_batch;
 };
 
 // Per-(dtype, layout) implementation, defined in fwd_dispatch_impl.hpp and
