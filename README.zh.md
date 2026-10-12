@@ -274,7 +274,7 @@ def flash_attn_func(
         - Q、K、V 的最后一维必须连续（stride(-1) == 1）。
         - batch_size > 0。
         - softcap >= 0（0.0 表示关闭；Ascend 950 不支持 softcap）。
-        - dropout_p == 0（不支持 dropout）。
+        - 0.0 <= dropout_p < 1.0；0.0 表示关闭 dropout。
         - 不支持 alibi_slopes。
         - 反向：headdim 须在 (0, 256]；Q 与 K 的 headdim 须相同。
 
@@ -359,7 +359,7 @@ def flash_attn_varlen_func(
         - Q、K、V 的最后一维必须连续（stride(-1) == 1）。
         - batch_size > 0。
         - softcap >= 0（0.0 表示关闭；Ascend 950 不支持 softcap）。
-        - dropout_p == 0（不支持 dropout）。
+        - 0.0 <= dropout_p < 1.0；0.0 表示关闭 dropout。
         - 不支持 alibi_slopes。
         - cu_seqlens_q / cu_seqlens_k / block_table 若传入须为 int32。
         - 反向：headdim 须在 (0, 256]；Q 与 K 的 headdim 须相同。
