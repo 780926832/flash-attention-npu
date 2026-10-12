@@ -1766,7 +1766,6 @@ def test_flash_attn_with_kvcache_metadata_matches_tnd_3d_nonpaged():
     q_offsets = [0, q_seqlen, q_seqlen * 2]
     cu_seqlens_q = _int32_npu(q_offsets)
     cache_seqlens = _int32_npu([kv_seqlen] * batch)
-    q_seqlens = _int32_npu([q_seqlen] * batch)
     scale = 1.0 / (head**0.5)
 
     scheduler_metadata = get_scheduler_metadata(

@@ -558,7 +558,9 @@ class FlashAttnFunc(torch.autograd.Function):
         if any(x is not None for x in (qv, q_descale, k_descale, v_descale)):
             raise NotImplementedError("Ascend950 v3 training scaffold only supports q/k/v inputs")
         if attention_chunk != 0:
-            raise NotImplementedError("Ascend950 v3 training scaffold does not support attention_chunk")
+            raise NotImplementedError(
+                "Ascend950 v3 training scaffold does not support attention_chunk"
+            )
         if num_splits not in (0, 1) or pack_gqa not in (None, False) or sm_margin != 0:
             raise NotImplementedError(
                 "Ascend950 v3 training scaffold does not support split/pack/sm tuning"
@@ -587,7 +589,18 @@ class FlashAttnFunc(torch.autograd.Function):
             )
 
         out, softmax_lse, _, _ = _training_forward(
-            q, k, v, None, None, None, None, softmax_scale, softcap, causal, window_size, scheduler_metadata
+            q,
+            k,
+            v,
+            None,
+            None,
+            None,
+            None,
+            softmax_scale,
+            softcap,
+            causal,
+            window_size,
+            scheduler_metadata,
         )
         ctx.save_for_backward(q, k, v, out, softmax_lse)
         ctx.softmax_scale = softmax_scale
@@ -624,7 +637,9 @@ class FlashAttnFunc(torch.autograd.Function):
             dv,
             ctx.softmax_scale,
             ctx.causal,
-            -1, -1, ctx.softcap,
+            -1,
+            -1,
+            ctx.softcap,
             ctx.deterministic,
             ctx.sm_margin,
         )
@@ -717,15 +732,24 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             )
 
         out, softmax_lse, _, _ = _training_forward(
-            q, k, v,
-            cu_seqlens_q, cu_seqlens_k,
-            max_seqlen_q, max_seqlen_k,
-            softmax_scale, softcap, causal, window_size,
+            q,
+            k,
+            v,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            softmax_scale,
+            softcap,
+            causal,
+            window_size,
             scheduler_metadata,
             seqused_q,
             seqused_k,
         )
-        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k)
+        ctx.save_for_backward(
+            q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k
+        )
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
         ctx.softmax_scale = softmax_scale
@@ -762,7 +786,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             dv,
             ctx.softmax_scale,
             ctx.causal,
-            -1, -1, ctx.softcap,
+            -1,
+            -1,
+            ctx.softcap,
             ctx.deterministic,
             ctx.sm_margin,
         )
@@ -1028,11 +1054,9 @@ def flash_attn_with_kvcache(
             max_q = q.shape[1]
         if page_table is not None:
             page_size = k_cache.shape[1]
-            num_blocks = k_cache.shape[0]
             max_blocks = page_table.shape[1]
         else:
             page_size = None
-            num_blocks = None
             max_blocks = None
         if cache_seqlens is not None:
             max_seqlen_k_bound = int(cache_seqlens.max().item())

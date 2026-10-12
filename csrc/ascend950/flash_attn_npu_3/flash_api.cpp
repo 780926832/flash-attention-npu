@@ -62,23 +62,11 @@ static at::Tensor GetSchedulerMetadataImpl(FAMetadataArgs args, const at::Tensor
     return meta;
 }
 
-at::Tensor get_scheduler_metadata(
-        int64_t batch_size,
-        int64_t max_seqlen_q,
-        int64_t num_heads_q,
-        int64_t num_heads_kv,
-        int64_t headdim,
-        int64_t headdim_v,
-        at::Tensor cache_seqlens,
-        std::optional<at::Tensor> seqlens_q,
-        std::optional<at::Tensor> cu_seqlens_k,
-        std::optional<int64_t> page_size,
-        bool causal,
-        bool hasSoftcap,
-        int64_t num_splits,
-        int64_t max_seqlen_k,
-        int64_t window_size_left,
-        int64_t window_size_right)
+at::Tensor get_scheduler_metadata(int64_t batch_size, int64_t max_seqlen_q, int64_t num_heads_q, int64_t num_heads_kv,
+                                  int64_t headdim, int64_t headdim_v, at::Tensor cache_seqlens,
+                                  std::optional<at::Tensor> seqlens_q, std::optional<at::Tensor> cu_seqlens_k,
+                                  std::optional<int64_t> page_size, bool causal, bool hasSoftcap, int64_t num_splits,
+                                  int64_t max_seqlen_k, int64_t window_size_left, int64_t window_size_right)
 {
     const c10::OptionalDeviceGuard device_guard(device_of(cache_seqlens));
     TORCH_CHECK(cache_seqlens.dtype() == torch::kInt32, "cache_seqlens must have dtype int32");
@@ -123,8 +111,7 @@ at::Tensor get_scheduler_metadata(
     args.maxQSeqlen = static_cast<uint32_t>(max_seqlen_q);
     // Match paged forward's mask selection using cache capacity.
     // AICPU adjusts windows using actual lengths.
-    const int64_t maskKvBound = page_size.has_value()
-        ? static_cast<int64_t>(maxNumBlocksPerBatch) * ps : max_seqlen_k;
+    const int64_t maskKvBound = page_size.has_value() ? static_cast<int64_t>(maxNumBlocksPerBatch) * ps : max_seqlen_k;
     FwdMaskDerivation maskDer = DeriveFwdMask(causal, window_size_left, window_size_right, max_seqlen_q, maskKvBound);
     args.maskType = maskDer.maskType;
     args.windowSizeLeft = static_cast<int32_t>(maskDer.window_left);

@@ -2,7 +2,6 @@
 
 import pytest
 import torch
-import torch_npu
 
 from flash_attn_npu_3 import flash_attn_with_kvcache, get_scheduler_metadata
 from tests.common.attention_ref import ref_flash_attention_pair
@@ -57,7 +56,6 @@ def test_flash_attn_kvcache_graph(is_causal):
     value_cache = make_random_tensor(
         (BATCH_SIZE, BLOCK_SIZE, NUM_KV_HEADS, HEAD_SIZE), DATA_TYPE, device="npu"
     )
-    seqlens_q = torch.tensor([Q_SEQLEN], dtype=torch.int32).npu()
     cache_seqlens = torch.tensor([KV_SEQLEN], dtype=torch.int32).npu()
     cu_seqlens_q = torch.tensor([0, Q_SEQLEN], dtype=torch.int32).npu()
     page_table = torch.tensor([[0]], dtype=torch.int32).npu()
