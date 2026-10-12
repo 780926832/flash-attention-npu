@@ -27,7 +27,7 @@
         <<<launchBlockDim, nullptr, aclStream>>>(                                  \
             fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice,     \
             oDevice, softmaxLseDevice, qSeqDevice, kvSeqDevice,                    \
-            workspaceDevice, tilingDevice, a.blockTableStride,                     \
+            workspaceDevice, tilingDevice, runtimeDevice, a.blockTableStride,         \
             sequsedQDevice, sequsedKVDevice)
 
 #define FWD_BOOL_SWITCH(COND, CONST_NAME, ...)             \
@@ -78,6 +78,7 @@ void launch_fwd_dtype(const FwdLaunchArgs &a) {
     uint8_t *kvSeqDevice = a.kvSeqDevice;
     uint8_t *workspaceDevice = a.workspaceDevice;
     uint8_t *tilingDevice = a.tilingDevice;
+    uint8_t *runtimeDevice = a.runtimeDevice;
     uint8_t *sequsedQDevice = a.sequsedQDevice;
     uint8_t *sequsedKVDevice = a.sequsedKVDevice;
     (void)flashDecodeFlag;

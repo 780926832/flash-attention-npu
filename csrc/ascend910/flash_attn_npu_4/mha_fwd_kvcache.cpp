@@ -123,7 +123,8 @@ namespace SplitFuse {
         __aicore__ inline
         void operator()(FAIKernelParams const &params)
         {
-            __gm__ FAInferTilingData *fATilingData = reinterpret_cast<__gm__ FAInferTilingData *>(params.tiling);
+            __gm__ FAInferStaticTilingData *fATilingData = reinterpret_cast<__gm__ FAInferStaticTilingData *>(params.tiling);
+            __gm__ FAInferRuntimeData *fARuntimeData = reinterpret_cast<__gm__ FAInferRuntimeData *>(params.runtime);
             mm1OutSize = fATilingData->mm1OutSize;
             smOnlineOutSize = fATilingData->smOnlineOutSize;
             mm2OutSize = fATilingData->mm2OutSize;
@@ -132,18 +133,18 @@ namespace SplitFuse {
             kvHeads = fATilingData->kvHeads;
             embed = fATilingData->embeddingSize;
             embedV = fATilingData->embeddingSizeV;
-            pagedBlockSize = fATilingData->blockSize;
+            pagedBlockSize = fARuntimeData->blockSize;
             // Metadata may infer capacity from the used KV length. The page
             // table can reserve more pages or be a view with a larger stride.
             blockTableStride = params.blockTableStride;
             firstBatchTaskNum = fATilingData->firstBatchTaskNum;
             totalTaskNum = fATilingData->totalTaskNum;
-            blockSize = fATilingData->blockSize;
-            maskType = fATilingData->maskType;
-            windowSizeLeft = fATilingData->windowSizeLeft;
-            windowSizeRight = fATilingData->windowSizeRight;
-            scaleValue = fATilingData->scaleValue;
-            softcapValue = fATilingData->softcapValue;
+            blockSize = fARuntimeData->blockSize;
+            maskType = fARuntimeData->maskType;
+            windowSizeLeft = fARuntimeData->windowSizeLeft;
+            windowSizeRight = fARuntimeData->windowSizeRight;
+            scaleValue = fARuntimeData->scaleValue;
+            softcapValue = fARuntimeData->softcapValue;
             maxQSeqlen = fATilingData->maxQSeqlen;
             flashDecodeFlag = fATilingData->flashDecodeFlag;
 
@@ -1083,6 +1084,7 @@ namespace SplitFuse {
         GM_ADDR actualKvseqlen,
         GM_ADDR workspace,
         GM_ADDR tiling,
+        GM_ADDR runtime,
         uint64_t blockTableStride,
         GM_ADDR seqUsedQ, GM_ADDR seqUsedKv)
     {
@@ -1148,7 +1150,7 @@ namespace SplitFuse {
                           PagedCacheFlag, maskCategory, inLayout, CombineScale>;
 
         FAIKernelParams params{q, k, v, mask, blockTables, actualQseqlen, actualKvseqlen, o, lse, workspace, tiling,
-                              blockTableStride, seqUsedQ, seqUsedKv};
+                              runtime, blockTableStride, seqUsedQ, seqUsedKv};
         FAInferKernelType flashAttnInfer;
         flashAttnInfer(params);
     }

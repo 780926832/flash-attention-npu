@@ -18,11 +18,11 @@ def test_fa4_910_scheduler_metadata_torch_compile_correctness():
     run_metadata_compile_test(
         api,
         expected_sizes={
-            "NO_MASK": 2376,
-            "CAUSAL": 2376,
-            "LOCAL_LEFT": 2376,
-            "LOCAL_RIGHT": 2376,
-            "FULL_WINDOW_COLLAPSE": 2376,
+            "NO_MASK": 2336,
+            "CAUSAL": 2336,
+            "LOCAL_LEFT": 2336,
+            "LOCAL_RIGHT": 2336,
+            "FULL_WINDOW_COLLAPSE": 2336,
         },
         tiling_only_metadata=True,
     )

@@ -12,10 +12,6 @@
 namespace {
 constexpr uint32_t Q_TILE_CEIL = 128;
 constexpr uint32_t N_SPLIT_HELPER = 2;
-constexpr uint32_t MASK_TYPE_NO_MASK = 0;
-constexpr uint32_t MASK_TYPE_CAUSAL = 1;
-constexpr uint32_t MASK_TYPE_BAND = 2;
-constexpr int64_t WINDOW_SIZE_INT_MAX = 2147483647;
 
 inline uint32_t CeilDiv(uint32_t a, uint32_t b)
 {
@@ -36,14 +32,13 @@ inline uint32_t GetQNBlockTile(uint32_t qSeqlen, uint32_t groupSize)
 __global__ __aicpu__ uint32_t ComputeFAMetadataV4(void *args)
 {
     FAMetadataArgs *metaArgs = reinterpret_cast<FAMetadataArgs *>(args);
-    const bool hasMask = metaArgs->maskType != 0;
-    FAInferTilingData *tilingData = reinterpret_cast<FAInferTilingData *>(
-        metaArgs->metaOutAddr + fa_metadata::TilingOffset(hasMask));
+    FAInferStaticTilingData *tilingData = reinterpret_cast<FAInferStaticTilingData *>(
+        metaArgs->metaOutAddr + fa_metadata::TilingOffset(false));
     const int32_t *seqlensQ = reinterpret_cast<const int32_t *>(metaArgs->seqlensQAddr);
     const int32_t *cacheSeqlens = reinterpret_cast<const int32_t *>(metaArgs->cacheSeqlensAddr);
 
     uint8_t *tilingBytes = reinterpret_cast<uint8_t *>(tilingData);
-    for (uint64_t i = 0; i < sizeof(FAInferTilingData); ++i) {
+    for (uint64_t i = 0; i < sizeof(FAInferStaticTilingData); ++i) {
         tilingBytes[i] = 0;
     }
 
@@ -52,11 +47,6 @@ __global__ __aicpu__ uint32_t ComputeFAMetadataV4(void *args)
     tilingData->kvHeads = metaArgs->numHeadsK;
     tilingData->embeddingSize = metaArgs->embeddingSize;
     tilingData->embeddingSizeV = metaArgs->embeddingSizeV;
-    tilingData->numBlocks = metaArgs->numBlocks;
-    tilingData->blockSize = metaArgs->blockSize;
-    tilingData->maxNumBlocksPerBatch = metaArgs->maxNumBlocksPerBatch;
-    tilingData->scaleValue = metaArgs->scaleValue;
-    tilingData->softcapValue = metaArgs->softcapValue;
     tilingData->maxQSeqlen = metaArgs->maxQSeqlen;
     tilingData->numSplits = metaArgs->numSplits > 0u ? metaArgs->numSplits : 1u;
 
@@ -70,48 +60,6 @@ __global__ __aicpu__ uint32_t ComputeFAMetadataV4(void *args)
         }
     }
     tilingData->maxKvSeqlen = maxKvSeqlen;
-
-    // get_scheduler_metadata derived maskType from cache capacity (no D2H).
-    // Re-apply the host window rule against the actual max KV length; layout
-    // and host template dispatch stay on the capacity-derived mask.
-    int64_t wl = metaArgs->windowSizeLeft;
-    int64_t wr = metaArgs->windowSizeRight;
-    if (maxKvSeqlen > 0 && wl >= static_cast<int64_t>(maxKvSeqlen)) {
-        wl = -1;
-    }
-    if (maxKvSeqlen > 0 && wr >= static_cast<int64_t>(maxKvSeqlen)) {
-        wr = -1;
-    }
-    if (metaArgs->maskType == MASK_TYPE_CAUSAL) {
-        wr = 0;
-    }
-    const bool isCausal = (wl < 0 && wr == 0);
-    const bool isLocal = (wl >= 0 || wr >= 0) && !isCausal;
-    if (isLocal) {
-        if (wl < 0) {
-            wl = static_cast<int64_t>(maxKvSeqlen);
-        }
-        if (wr < 0) {
-            wr = static_cast<int64_t>(maxKvSeqlen);
-        }
-    }
-    tilingData->windowSizeLeft = wl;
-    tilingData->windowSizeRight = wr;
-    if (isLocal) {
-        tilingData->maskType = MASK_TYPE_BAND;
-    } else if (isCausal) {
-        // Host may have launched MASK_SWA; MASK_CAUSAL softmax is a different
-        // compile-time path, so encode causal as SWA with unlimited left.
-        if (metaArgs->maskType == MASK_TYPE_BAND) {
-            tilingData->maskType = MASK_TYPE_BAND;
-            tilingData->windowSizeLeft = WINDOW_SIZE_INT_MAX;
-            tilingData->windowSizeRight = 0;
-        } else {
-            tilingData->maskType = MASK_TYPE_CAUSAL;
-        }
-    } else {
-        tilingData->maskType = MASK_TYPE_NO_MASK;
-    }
 
     const uint64_t blockDim = static_cast<uint64_t>(metaArgs->blockDim);
     tilingData->mm1OutSize = fa_metadata::Mm1OutSize(blockDim);
@@ -178,6 +126,15 @@ __global__ __aicpu__ uint32_t ComputeFAMetadataV4(void *args)
         }
     }
 
+    AscendC::DataStoreBarrier();
+    return 0;
+}
+
+__global__ __aicpu__ uint32_t WriteFARuntime(void *args)
+{
+    const auto *runtimeArgs = reinterpret_cast<const FARuntimeArgs *>(args);
+    auto *runtime = reinterpret_cast<FAInferRuntimeData *>(runtimeArgs->runtimeAddr);
+    *runtime = runtimeArgs->runtime;
     AscendC::DataStoreBarrier();
     return 0;
 }

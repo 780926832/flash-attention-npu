@@ -175,7 +175,7 @@ def _flash_attn_forward(
 # get_scheduler_metadata() implementation.
 # ----------------------------------------------------------------------
 
-_SCHEDULER_METADATA_TILING_BYTES = 2376
+_SCHEDULER_METADATA_TILING_BYTES = 2336
 
 
 @torch.library.custom_op(
@@ -190,19 +190,19 @@ def _get_scheduler_metadata_op(
     num_heads_kv: int,
     headdim: int,
     headdim_v: int,
-    qkv_dtype: torch.dtype,
     cache_seqlens: torch.Tensor,
-    seqlens_q: Optional[torch.Tensor],
-    page_size: Optional[int],
+    cu_seqlens_q: Optional[torch.Tensor],
     causal: bool,
     window_size_left: int,
     window_size_right: int,
-    softcap: float,
     num_splits: int,
     pack_gqa: Optional[bool],
     sm_margin: int,
-    softmax_scale: Optional[float],
+    seqused_q: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    # Keep the raw pybind call behind a torch.library op. Calling a pybind
+    # function directly from a torch.compile graph is treated as an opaque
+    # Python/C++ builtin and causes a Dynamo graph break.
     return flash_attn_npu_4.get_scheduler_metadata(
         batch_size,
         max_seqlen_q,
@@ -211,18 +211,15 @@ def _get_scheduler_metadata_op(
         num_heads_kv,
         headdim,
         headdim_v,
-        qkv_dtype,
         cache_seqlens,
-        seqlens_q,
-        page_size,
+        cu_seqlens_q,
         causal,
         window_size_left,
         window_size_right,
-        softcap,
         num_splits,
         pack_gqa,
         sm_margin,
-        softmax_scale,
+        seqused_q,
     )
 
 
@@ -237,20 +234,19 @@ def _get_scheduler_metadata_fake(
     num_heads_kv: int,
     headdim: int,
     headdim_v: int,
-    qkv_dtype: torch.dtype,
     cache_seqlens: torch.Tensor,
-    seqlens_q: Optional[torch.Tensor],
-    page_size: Optional[int],
+    cu_seqlens_q: Optional[torch.Tensor],
     causal: bool,
     window_size_left: int,
     window_size_right: int,
-    softcap: float,
     num_splits: int,
     pack_gqa: Optional[bool],
     sm_margin: int,
-    softmax_scale: Optional[float],
+    seqused_q: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-
+    # The metadata is an opaque byte buffer during tracing. Ascend 910 FA4
+    # serializes one fixed-size FAInferStaticTilingData object, so returning a
+    # static shape lets Dynamo keep the custom op in the graph.
     return torch.empty(
         (_SCHEDULER_METADATA_TILING_BYTES,),
         dtype=torch.uint8,
@@ -259,57 +255,85 @@ def _get_scheduler_metadata_fake(
 
 
 def get_scheduler_metadata(
-    batch_size,
     max_seqlen_q,
     max_seqlen_k,
-    num_heads_q,
-    num_heads_kv,
+    nheads,
+    nheads_kv,
     headdim,
-    cache_seqlens: torch.Tensor,
-    qkv_dtype=torch.bfloat16,
+    num_splits,
     headdim_v=None,
-    seqlens_q: Optional[torch.Tensor] = None,
-    page_size: Optional[int] = None,
+    pack_gqa=None,
     causal=False,
-    window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0,   # 0.0 means deactivated
-    num_splits=0,  # Can be tuned for speed
-    pack_gqa=None,  # Can be tuned for speed
-    sm_margin=0,
-    softmax_scale=None,  # defaults to 1 / sqrt(headdim); must match the fwd call
+    window_size_left=None,
+    window_size_right=None,
+    seqlen_k_new=0,
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cu_seqlens_k: Optional[torch.Tensor] = None,
+    cu_seqlens_k_new: Optional[torch.Tensor] = None,
+    seqused_q: Optional[torch.Tensor] = None,
+    seqused_k: Optional[torch.Tensor] = None,
+    leftpad_k: Optional[torch.Tensor] = None,
+    seqlen_k_per_split: Optional[int] = None,
+    _arch: Optional[int] = None,
 ):
-    """Precompute scheduler metadata (tiling) on the AICPU.
+    """Precompute Ascend 910 FA4 metadata using the Tri Dao FA4 signature.
 
-    This avoids the device->host->device round trip in the eager tiling path by
-    running the tiling derivation on the NPU. The returned byte tensor is
-    passed back to ``flash_attn_func`` / ``flash_attn_varlen_func`` through the
-    ``scheduler_metadata`` argument.
+    Ascend FA4 does not support KV updates, padded BSND Q lengths, left padding,
+    or fixed split lengths. Those Tri Dao parameters remain as compatibility
+    placeholders and must retain their default unsupported values.
     """
-    cache_seqlens = maybe_contiguous(cache_seqlens)
+    if seqlen_k_new != 0:
+        raise ValueError("Ascend 910 FA4 does not support seqlen_k_new")
+    if cu_seqlens_k_new is not None:
+        raise ValueError("Ascend 910 FA4 does not support cu_seqlens_k_new")
+    if leftpad_k is not None:
+        raise ValueError("Ascend 910 FA4 does not support leftpad_k")
+    if seqlen_k_per_split is not None:
+        raise ValueError("Ascend 910 FA4 does not support seqlen_k_per_split")
+    if _arch is not None:
+        raise ValueError("Ascend 910 FA4 does not accept _arch")
+    if cu_seqlens_q is not None:
+        cu_seqlens_q = maybe_contiguous(cu_seqlens_q)
+    if cu_seqlens_k is not None:
+        cu_seqlens_k = maybe_contiguous(cu_seqlens_k)
+    if seqused_q is not None:
+        seqused_q = maybe_contiguous(seqused_q)
+    if seqused_k is None:
+        if cu_seqlens_k is None:
+            raise ValueError("seqused_k or cu_seqlens_k is required")
+        seqused_k = cu_seqlens_k[1:] - cu_seqlens_k[:-1]
+    seqused_k = maybe_contiguous(seqused_k)
+    batch_size = seqused_k.numel()
+    if cu_seqlens_q is not None and cu_seqlens_q.numel() != batch_size + 1:
+        raise ValueError("cu_seqlens_q batch size does not match seqused_k")
+    if seqused_q is not None and seqused_q.numel() != batch_size:
+        raise ValueError("seqused_q batch size does not match seqused_k")
     if headdim_v is None:
         headdim_v = headdim
-    scheduler_metadata = _get_scheduler_metadata_op(
+    if window_size_left is None:
+        window_size_left = -1
+    if window_size_right is None:
+        window_size_right = -1
+    if pack_gqa is not None and pack_gqa:
+        raise ValueError("Ascend 910 FA4 does not support pack_gqa=True")
+    return _get_scheduler_metadata_op(
         batch_size,
         max_seqlen_q,
         max_seqlen_k,
-        num_heads_q,
-        num_heads_kv,
+        nheads,
+        nheads_kv,
         headdim,
         headdim_v,
-        qkv_dtype,
-        cache_seqlens,
-        seqlens_q,
-        page_size,
+        seqused_k,
+        cu_seqlens_q,
         causal,
-        window_size[0],
-        window_size[1],
-        softcap,
+        window_size_left,
+        window_size_right,
         num_splits,
         pack_gqa,
-        sm_margin,
-        softmax_scale,
+        0,
+        seqused_q,
     )
-    return scheduler_metadata
 @_torch_register_fake_wrapper("flash_attn_npu_4::_flash_attn_forward")
 def _flash_attn_forward_fake(
     q: torch.Tensor,
@@ -615,26 +639,22 @@ class FlashAttnFunc(torch.autograd.Function):
         seqlen_k = k.shape[1]
         num_heads_k = k.shape[2]
         head_size_v = v.shape[-1]
-        cache_seqlens = torch.full(
+        seqused_k = torch.full(
             (batch_size,), seqlen_k, dtype=torch.int32, device=q.device
         )
         scheduler_metadata = get_scheduler_metadata(
-            batch_size,
-            seqlen_q,
-            seqlen_k,
-            num_heads,
-            num_heads_k,
-            head_size,
-            cache_seqlens,
-            qkv_dtype=q.dtype,
-            headdim_v=head_size_v,
-            causal=causal,
-            window_size=window_size,
-            softcap=softcap,
+            max_seqlen_q=seqlen_q,
+            max_seqlen_k=seqlen_k,
+            nheads=num_heads,
+            nheads_kv=num_heads_k,
+            headdim=head_size,
             num_splits=num_splits,
+            headdim_v=head_size_v,
             pack_gqa=pack_gqa,
-            sm_margin=0,
-            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size_left=window_size[0],
+            window_size_right=window_size[1],
+            seqused_k=seqused_k,
         )
 
         out, softmax_lse = _flash_attn_forward(
@@ -832,24 +852,19 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
                 metadata_max_seqlen_k = int(cache_seqlens.max().item())
                 fwd_max_seqlen_k = metadata_max_seqlen_k
             scheduler_metadata = get_scheduler_metadata(
-                batch_size,
-                max_seqlen_q,
-                metadata_max_seqlen_k,
-                num_heads,
-                num_heads_k,
-                head_size,
-                cache_seqlens,
-                qkv_dtype=q.dtype,
-                headdim_v=head_size_v,
-                seqlens_q=seqlens_q_arg,
-                page_size=k.shape[1] if (page_table is not None and k.dim() == 4) else None,
-                causal=causal,
-                window_size=window_size,
-                softcap=softcap,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_k=metadata_max_seqlen_k,
+                nheads=num_heads,
+                nheads_kv=num_heads_k,
+                headdim=head_size,
                 num_splits=num_splits,
+                headdim_v=head_size_v,
                 pack_gqa=pack_gqa,
-                sm_margin=0,
-                softmax_scale=softmax_scale,
+                causal=causal,
+                window_size_left=window_size[0],
+                window_size_right=window_size[1],
+                seqused_k=cache_seqlens,
+                seqused_q=seqlens_q_arg,
             )
 
         out, softmax_lse = _flash_attn_forward(

@@ -262,23 +262,22 @@ def _metadata(
             seqused_k=seqlens_k,
         )
 
+    # Ascend910 uses the same Tri Dao FA4 signature. The metadata is reusable
+    # static tiling only: dtype / page-size / softmax-scale / softcap are
+    # per-call runtime values, so they are intentionally dropped here.
     return get_scheduler_metadata(
-        batch_size=batch_size,
         max_seqlen_q=q_seqlen,
         max_seqlen_k=kv_seqlen,
-        num_heads_q=num_heads,
-        num_heads_kv=kv_heads,
+        nheads=num_heads,
+        nheads_kv=kv_heads,
         headdim=head_size,
-        seqlens_q=seqlens_q,
-        cache_seqlens=seqlens_k,
-        qkv_dtype=data_type,
-        page_size=page_size,
-        causal=is_causal,
-        window_size=window_size,
-        softcap=softcap,
-        softmax_scale=softmax_scale,
         num_splits=num_splits,
-        sm_margin=0,
+        headdim_v=head_size,
+        causal=is_causal,
+        window_size_left=window_size[0],
+        window_size_right=window_size[1],
+        seqused_q=seqlens_q,
+        seqused_k=seqlens_k,
     )
 
 

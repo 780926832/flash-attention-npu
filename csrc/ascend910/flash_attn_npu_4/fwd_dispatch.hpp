@@ -45,6 +45,7 @@ struct FwdLaunchArgs {
     uint8_t *kvSeqDevice;
     uint8_t *workspaceDevice;
     uint8_t *tilingDevice;
+    uint8_t *runtimeDevice;
     uint8_t *sequsedQDevice;
     uint8_t *sequsedKVDevice;
 };

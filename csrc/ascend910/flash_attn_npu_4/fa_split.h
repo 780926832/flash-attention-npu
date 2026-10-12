@@ -83,7 +83,7 @@ inline BatchParams getBatchParams(uint32_t bIdx, uint32_t groupSize, const Split
     return p;
 }
 
-inline void fillCoreInfoForFlashDecode(FAInferTilingData* tiling, uint32_t groupSize,
+inline void fillCoreInfoForFlashDecode(FAInferStaticTilingData* tiling, uint32_t groupSize,
                                        uint64_t perCoreTaskNum, const SplitContext& ctx)
 {
     int32_t nowBIdx = 0;
@@ -222,7 +222,7 @@ inline void fillCoreInfoForFlashDecode(FAInferTilingData* tiling, uint32_t group
     }
 }
 
-inline void fillSplitInfoForFlashDecode(FAInferTilingData* tiling, uint32_t groupSize,
+inline void fillSplitInfoForFlashDecode(FAInferStaticTilingData* tiling, uint32_t groupSize,
                                         const SplitContext& ctx)
 {
     constexpr uint32_t SIZE_OF_32BIT = 4;
@@ -351,7 +351,7 @@ inline uint32_t countForceSplitSegments(uint32_t groupSize, const SplitContext& 
     return totalSegs;
 }
 
-inline void fillCoreInfoForceSplit(FAInferTilingData* tiling, uint32_t groupSize,
+inline void fillCoreInfoForceSplit(FAInferStaticTilingData* tiling, uint32_t groupSize,
                                    const SplitContext& ctx)
 {
     for (uint32_t coreIdx = 0; coreIdx < ctx.blockDim; coreIdx++) {
@@ -400,7 +400,7 @@ inline void fillCoreInfoForceSplit(FAInferTilingData* tiling, uint32_t groupSize
     tiling->set_needCoreNum(coreIdx);
 }
 
-inline void fillCoreInfoNoSplit(FAInferTilingData* tiling, uint32_t groupSize,
+inline void fillCoreInfoNoSplit(FAInferStaticTilingData* tiling, uint32_t groupSize,
                                 const SplitContext& ctx)
 {
     for (uint32_t coreIdx = 0; coreIdx < ctx.blockDim; coreIdx++) {
@@ -479,7 +479,7 @@ inline void fillCoreInfoNoSplit(FAInferTilingData* tiling, uint32_t groupSize,
     tiling->set_needCoreNum(usedCores);
 }
 
-inline void splitBN2S1GS2(FAInferTilingData* tiling, const SplitContext& ctx)
+inline void splitBN2S1GS2(FAInferStaticTilingData* tiling, const SplitContext& ctx)
 {
     uint64_t totalTaskNum = 0;
     uint32_t groupSize = ctx.num_heads / ctx.num_heads_k;
