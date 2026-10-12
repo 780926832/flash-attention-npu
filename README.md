@@ -367,6 +367,7 @@ def flash_attn_varlen_func(
         - dtype: float16 / bfloat16 only; Q, K, V must share the same dtype.
         - Q, K, V must have contiguous last dimension (stride(-1) == 1).
         - batch_size > 0.
+        - total_q > 0; Q must contain at least one query token.
         - softcap >= 0 (0.0 disables; not supported on Ascend 950).
         - dropout_p == 0 (not supported).
         - alibi_slopes not supported.
@@ -633,6 +634,7 @@ def flash_attn_varlen_func(
         - dtype: float16 / bfloat16 only; Q, K, V must share the same dtype.
         - Q, K, V must have contiguous last dimension (stride(-1) == 1).
         - batch_size > 0.
+        - total_q > 0; Q must contain at least one query token.
         - softcap >= 0 (0.0 disables; not supported on Ascend 950).
         - alibi_slopes / FP8 descales / attention_chunk / pack_gqa not supported.
         - cu_seqlens_q / cu_seqlens_k must be int32 when provided.

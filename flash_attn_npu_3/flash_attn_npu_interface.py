@@ -86,6 +86,15 @@ def _pad_bwd_headdim(dout, q, k, v, out, head_size_og):
     return _pad(dout), _pad(q), _pad(k), _pad(v), _pad(out), head_size_og
 
 
+def _validate_varlen_query(q, cu_seqlens_q):
+    if q.dim() != 3:
+        raise RuntimeError(f"q must be 3-dimensional; got {q.dim()} dimensions")
+    if cu_seqlens_q.numel() <= 1:
+        raise RuntimeError("batch size must be positive")
+    if q.shape[0] == 0:
+        raise RuntimeError("total_q must be positive (q must contain at least one query token)")
+
+
 def round_up_headdim(head_size: int) -> int:
     return round_multiple(head_size, _HEADDIM_BWD_ALIGN)
 
@@ -230,6 +239,8 @@ def _flash_attn_forward_fake(
 
     # Determine if we're in varlen mode
     is_varlen_q = cu_seqlens_q is not None
+    if is_varlen_q:
+        _validate_varlen_query(q, cu_seqlens_q)
 
     # Get dimensions from query tensor
     if is_varlen_q:
@@ -784,6 +795,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         sm_margin=0,
         return_softmax=False,
     ):
+        _validate_varlen_query(q, cu_seqlens_q)
         if softmax_scale is None:
             softmax_scale = (q.shape[-1] + (qv.shape[-1] if qv is not None else 0)) ** (-0.5)
         # Training interfaces do not expose scheduler_metadata (aligned with

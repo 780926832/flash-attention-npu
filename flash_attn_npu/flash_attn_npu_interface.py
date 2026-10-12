@@ -21,6 +21,15 @@ def round_multiple(x, m):
     return (x + m - 1) // m * m
 
 
+def _validate_varlen_query(q, cu_seqlens_q):
+    if q.dim() != 3:
+        raise RuntimeError(f"q must be 3-dimensional; got {q.dim()} dimensions")
+    if cu_seqlens_q.numel() <= 1:
+        raise RuntimeError("batch size must be positive")
+    if q.shape[0] == 0:
+        raise RuntimeError("total_q must be positive (q must contain at least one query token)")
+
+
 _HEADDIM_BWD_ALIGN = 64
 
 
@@ -226,6 +235,7 @@ def _flash_attn_varlen_forward_fake(
     zero_tensors: bool = False,
     scheduler_metadata: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    _validate_varlen_query(q, cu_seqlens_q)
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
     paged_kv = block_table is not None
     batch_size = cu_seqlens_q.numel() - 1
@@ -946,6 +956,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         block_table,
         is_grad_enabled,
     ):
+        _validate_varlen_query(q, cu_seqlens_q)
         is_grad = is_grad_enabled and any(
             x.requires_grad for x in [q, k, v]
         )

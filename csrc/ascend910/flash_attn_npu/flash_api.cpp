@@ -947,6 +947,10 @@ mha_varlen_fwd(at::Tensor &q,  // total_q x num_heads x head_size, total_q := \s
     bool is_fp16 = q.dtype() == torch::kFloat16;
     const bool paged_KV = block_table_.has_value();
 
+    TORCH_CHECK(q.dim() == 3, "q must be 3-dimensional; got ", q.dim(), " dimensions");
+    TORCH_CHECK(cu_seqlens_q.numel() > 1, "batch size must be positive");
+    TORCH_CHECK(q.size(0) > 0, "total_q must be positive (q must contain at least one query token)");
+
     // 校验拦截不支持的模式
     TORCH_CHECK(is_bf16 || is_fp16, "NPU FlashAttention only supports Float16 or BFloat16.");
     TORCH_CHECK(!seqused_k_.has_value(), "NPU FlashAttention does not support seqused_k.");
