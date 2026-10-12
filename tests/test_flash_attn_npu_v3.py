@@ -1439,7 +1439,9 @@ class TestQueryDimensionBounds:
             k = _dimension_test_tensor((1, 1, 1, 16), dtype)
             v = _dimension_test_tensor((1, 1, 1, 16), dtype)
             cu_q = torch.tensor([0, 1], dtype=torch.int32, device="npu")
-            with pytest.raises(RuntimeError, match=_dimension_bound_error("max_seqlen_q", max_seqlen_q)):
+            with pytest.raises(
+                RuntimeError, match=_dimension_bound_error("max_seqlen_q", max_seqlen_q)
+            ):
                 flash_attn_with_kvcache(
                     q, k, v, cu_seqlens_q=cu_q, max_seqlen_q=max_seqlen_q, num_splits=1
                 )
@@ -1488,6 +1490,10 @@ class TestQueryDimensionBounds:
         )
         # Dynamic tracing reports the symbolic dimension (e.g. s0). Eager and
         # static tracing must report the original concrete value.
-        error = re.escape(f"{name} must be in [0, {_FWD_INT32_MAX}]") if dynamic else _dimension_bound_error(name, size)
+        error = (
+            re.escape(f"{name} must be in [0, {_FWD_INT32_MAX}]")
+            if dynamic
+            else _dimension_bound_error(name, size)
+        )
         with pytest.raises(RuntimeError, match=error):
             compiled(q, k, v, num_splits=1)
