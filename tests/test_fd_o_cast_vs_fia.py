@@ -3,7 +3,7 @@
 """Run FA decode with automatic KV splitting; FIA comparison is disabled.
 
 This case uses paged TND, one query token, 64 query heads and KV length
-2048. num_splits=0 lets FA select the KV splitting automatically.
+8192. num_splits=0 lets FA select the KV splitting automatically.
 
 Run from the flash-attention-npu directory:
 
@@ -17,7 +17,7 @@ from flash_attn_npu_3 import flash_attn_with_kvcache
 from tests.common.test_utils import make_random_tensor
 
 Q_LEN = 1
-KV_LEN = 2048
+KV_LEN = 8192
 # 64 query heads keep this one decode row on FIA's flash-decode path.
 # Fewer heads make s1 * g < 64, and FIA then stays on the prefill cast.
 NUM_HEADS = 64

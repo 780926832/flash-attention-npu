@@ -9,6 +9,7 @@ from flash_attn_npu_3 import flash_attn_with_kvcache
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("return_lse", [False, True])
 @pytest.mark.parametrize("batch,q_len,heads,kv_heads,dim,splits,kv_len", [
     (1, 1, 64, 1, 128, 0, 2048),  # Decode target: parallel AIV row tiles.
     (2, 1, 8, 1, 128, 4, 2048),   # LSE head stride with multiple batches.
@@ -22,7 +23,7 @@ from flash_attn_npu_3 import flash_attn_with_kvcache
     (2, 1, 5, 1, 1, 4, 2048),     # Multi-row FP32 input stride of one block.
     (1, 16, 4, 1, 256, 0, 4096),   # Many auto splits span multiple UB load batches.
 ])
-def test_fd_combine_output_and_lse(dtype, batch, q_len, heads, kv_heads, dim, splits, kv_len):
+def test_fd_combine_output_and_lse(dtype, return_lse, batch, q_len, heads, kv_heads, dim, splits, kv_len):
     if "Ascend950" not in torch_npu.npu.get_device_name():
         pytest.skip("Ascend950 FD combine regression")
 
@@ -43,23 +44,26 @@ def test_fd_combine_output_and_lse(dtype, batch, q_len, heads, kv_heads, dim, sp
     cu_q = torch.arange(batch + 1, dtype=torch.int32) * q_len
     kv_lengths = torch.full((batch,), kv_len, dtype=torch.int32)
 
-    out, lse, *_ = flash_attn_with_kvcache(
+    result = flash_attn_with_kvcache(
         q.npu(), k.npu(), v.npu(), cache_seqlens=kv_lengths.npu(),
         page_table=table.npu(), cu_seqlens_q=cu_q.npu(), max_seqlen_q=q_len,
-        softmax_scale=1.0, num_splits=splits, return_softmax_lse=True,
+        softmax_scale=1.0, num_splits=splits, return_softmax_lse=return_lse,
     )
+    out = result[0] if return_lse else result
     expected_out = values.repeat_interleave(heads // kv_heads, dim=1)
     expected_out = expected_out[:, None].expand(batch, q_len, heads, dim).reshape_as(q)
     expected_lse = (scores + torch.log(torch.tensor(float(kv_len)))).T.contiguous()
     torch.testing.assert_close(out.cpu(), expected_out, atol=0, rtol=0)
-    torch.testing.assert_close(lse.cpu(), expected_lse, atol=2e-6, rtol=0)
+    if return_lse:
+        torch.testing.assert_close(result[1].cpu(), expected_lse, atol=2e-6, rtol=0)
 
 
 @pytest.mark.parametrize("dtype,kv_len", [
     (torch.bfloat16, 2048),
     (torch.float16, 16384),
 ])
-def test_fd_combine_keeps_partial_o_fp32(dtype, kv_len):
+@pytest.mark.parametrize("return_lse", [False, True])
+def test_fd_combine_keeps_partial_o_fp32(dtype, kv_len, return_lse):
     if "Ascend950" not in torch_npu.npu.get_device_name():
         pytest.skip("Ascend950 FD combine regression")
 
@@ -77,13 +81,15 @@ def test_fd_combine_keeps_partial_o_fp32(dtype, kv_len):
     lengths = torch.tensor([kv_len], dtype=torch.int32, device="npu")
     cu_q = torch.tensor([0, 1], dtype=torch.int32, device="npu")
 
-    out, lse, *_ = flash_attn_with_kvcache(
+    result = flash_attn_with_kvcache(
         q, k, v.reshape_as(k).npu(), cache_seqlens=lengths,
         page_table=table, cu_seqlens_q=cu_q, max_seqlen_q=1,
-        softmax_scale=1.0, num_splits=2, return_softmax_lse=True,
+        softmax_scale=1.0, num_splits=2, return_softmax_lse=return_lse,
     )
+    out = result[0] if return_lse else result
     torch.testing.assert_close(out.cpu(), expected, atol=0, rtol=0)
-    torch.testing.assert_close(
-        lse.cpu(), torch.full((heads, 1), torch.log(torch.tensor(float(kv_len)))),
-        atol=2e-6, rtol=0,
-    )
+    if return_lse:
+        torch.testing.assert_close(
+            result[1].cpu(), torch.full((heads, 1), torch.log(torch.tensor(float(kv_len)))),
+            atol=2e-6, rtol=0,
+        )

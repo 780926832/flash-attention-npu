@@ -847,7 +847,7 @@ public:
                 AscendC::PipeBarrier<PIPE_ALL>();
                 AscendC::SyncAll<false>();
 #ifdef __DAV_VEC__
-                FlashDecodeCombine950<ElementO> combine(resource);
+                FlashDecodeCombine950<ElementO, LseMode> combine(resource);
                 combine(params);
 #endif
             }
