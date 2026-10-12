@@ -4,6 +4,8 @@
 
 实测结论：**本次 VF 融合有稳定收益。KV8192 目标输入的完整 kernel 耗时降低 4.21%～7.63%，四种配置在三轮中均变快。** 新旧版本各通过 68 项回归测试和 24 项独立 FP32 参考检查。目标 BF16 O 与基线逐位一致；部分 FP16 O 和 FP32 LSE 有小幅舍入变化，参考精度检查均通过。
 
+后续补测：已对提交 `4256f75` 的完整/屏蔽 combine 版本重新做同卡差分，默认自动 28 分片、返回 LSE 时 combine 增量约 4.757 μs；四种配置及方法见[优化后 combine 阶段耗时记录](fa_fd_combine_after_vf_20261012.md)。下文保留本次 VF 优化前后的完整 kernel 对比。
+
 ## 修改内容与同步
 
 修改 Ascend950 v3 的 [fd_combine.hpp](../csrc/ascend950/flash_attn_npu_3/fd_combine.hpp)，将 `PrepareWeights()` 中的高层向量计算替换为一个 `NormalizeWeights()` VF：
