@@ -9,7 +9,6 @@
 #include <type_traits>
 
 #include "kernel_operator.h"
-#include "adv_api/reduce/reduce.h"
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
@@ -32,39 +31,25 @@ public:
     __aicore__ inline explicit FlashDecodeCombine950(Resource &resource)
     {
         constexpr uint32_t LSE_OFFSET = 0U;
-        constexpr uint32_t LSE_BROADCAST_OFFSET =
-            LSE_OFFSET + MAX_LSE_ELEMS * sizeof(float);
         constexpr uint32_t WEIGHT_OFFSET =
-            LSE_BROADCAST_OFFSET + MAX_LSE_ELEMS * sizeof(float);
-        constexpr uint32_t LSE_MAX_OFFSET =
-            WEIGHT_OFFSET + MAX_LSE_ELEMS * sizeof(float);
-        constexpr uint32_t LSE_SUM_OFFSET =
-            LSE_MAX_OFFSET + MAX_ROW_TILE * sizeof(float);
+            LSE_OFFSET + MAX_LSE_ELEMS * sizeof(float);
         constexpr uint32_t GLOBAL_LSE_OFFSET =
-            LSE_SUM_OFFSET + MAX_ROW_TILE * sizeof(float);
+            WEIGHT_OFFSET + MAX_LSE_ELEMS * sizeof(float);
         constexpr uint32_t LSE_STORE_OFFSET =
             GLOBAL_LSE_OFFSET + MAX_ROW_TILE * sizeof(float);
         constexpr uint32_t O_INPUT_OFFSET =
             LSE_STORE_OFFSET + MAX_ROW_TILE * FLOATS_PER_BLOCK * sizeof(float);
         constexpr uint32_t O_ACC_OFFSET =
             O_INPUT_OFFSET + MAX_O_INPUT_ELEMS * sizeof(float);
-        constexpr uint32_t REDUCE_TMP_OFFSET =
-            O_ACC_OFFSET + MAX_O_ELEMS * sizeof(float);
 
         lseUb_ = resource.ubBuf.template GetBufferByByte<float>(LSE_OFFSET);
-        broadcastUb_ =
-            resource.ubBuf.template GetBufferByByte<float>(LSE_BROADCAST_OFFSET);
         weightUb_ = resource.ubBuf.template GetBufferByByte<float>(WEIGHT_OFFSET);
-        lseMaxUb_ = resource.ubBuf.template GetBufferByByte<float>(LSE_MAX_OFFSET);
-        lseSumUb_ = resource.ubBuf.template GetBufferByByte<float>(LSE_SUM_OFFSET);
         globalLseUb_ =
             resource.ubBuf.template GetBufferByByte<float>(GLOBAL_LSE_OFFSET);
         lseStoreUb_ = resource.ubBuf.template GetBufferByByte<float>(LSE_STORE_OFFSET);
         oInputUb_ = resource.ubBuf.template GetBufferByByte<float>(O_INPUT_OFFSET);
         oAccUb_ = resource.ubBuf.template GetBufferByByte<float>(O_ACC_OFFSET);
         oOutUb_ = resource.ubBuf.template GetBufferByByte<ElementO>(O_INPUT_OFFSET);
-        reduceTmpUb_ =
-            resource.ubBuf.template GetBufferByByte<uint8_t>(REDUCE_TMP_OFFSET);
     }
 
     __aicore__ inline void operator()(FAIKernelParams const &params)
@@ -278,40 +263,54 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
 
-        uint32_t reduceShape[] = {partialCountAlign, rowCountAlign};
-        AscendC::ReduceMax<float, AscendC::Pattern::Reduce::RA, false>(
-            lseMaxUb_, lseUb_, reduceTmpUb_, reduceShape, true);
+        NormalizeWeights(
+            (__ubuf__ float *)lseUb_.GetPhyAddr(),
+            (__ubuf__ float *)weightUb_.GetPhyAddr(),
+            (__ubuf__ float *)globalLseUb_.GetPhyAddr(),
+            partialCountAlign, rowCount, rowCountAlign);
+        // Publish VF stores before the O reduction or final LSE DMA reads UB.
         AscendC::PipeBarrier<PIPE_V>();
-        BroadcastRows(lseMaxUb_, rowCountAlign, partialCountAlign);
-        AscendC::Sub(weightUb_, lseUb_, broadcastUb_, calcElems);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::Exp(weightUb_, weightUb_, calcElems);
-        AscendC::PipeBarrier<PIPE_V>();
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::RA, false>(
-            lseSumUb_, weightUb_, reduceTmpUb_, reduceShape, true);
-        AscendC::PipeBarrier<PIPE_V>();
-        // Reuse u_i = exp(L_i - max(L)) and normalize in FP32. Computing
-        // exp(L_i - globalLse) again adds work and another rounding path.
-        BroadcastRows(lseSumUb_, rowCountAlign, partialCountAlign);
-        AscendC::Div(weightUb_, weightUb_, broadcastUb_, calcElems);
-        AscendC::PipeBarrier<PIPE_V>();
-        if constexpr (OutputLse) {
-            AscendC::Ln(globalLseUb_, lseSumUb_, rowCountAlign);
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::Add(globalLseUb_, globalLseUb_, lseMaxUb_, rowCountAlign);
-            AscendC::PipeBarrier<PIPE_V>();
-        }
     }
 
-    __aicore__ inline void BroadcastRows(
-        const AscendC::LocalTensor<float> &src,
-        uint32_t rowCountAlign, uint32_t partialCountAlign)
+    // Each active lane is one row. Keep that row's max/sum in registers and
+    // reuse them for every split instead of materializing broadcast tensors.
+    __simd_vf__ static inline void NormalizeWeights(
+        __ubuf__ float *lse, __ubuf__ float *weights, __ubuf__ float *globalLse,
+        uint32_t partialCountAlign, uint32_t rowCount, uint32_t rowStride)
     {
-        for (uint32_t partial = 0U; partial < partialCountAlign; ++partial) {
-            AscendC::Adds(broadcastUb_[partial * rowCountAlign], src,
-                0.0F, rowCountAlign);
+        using namespace AscendC::MicroAPI;
+        RegTensor<float> maxReg, sumReg, valueReg;
+        uint32_t remaining = rowCount;
+        MaskReg mask = UpdateMask<float>(remaining);
+        LoadAlign<float, LoadDist::DIST_NORM>(maxReg, lse);
+        for (uint32_t partial = 1U; partial < partialCountAlign; ++partial) {
+            LoadAlign<float, LoadDist::DIST_NORM>(valueReg, lse + partial * rowStride);
+            AscendC::MicroAPI::Max(maxReg, maxReg, valueReg, mask);
         }
-        AscendC::PipeBarrier<PIPE_V>();
+
+        Duplicate<float, MaskMergeMode::ZEROING, float>(sumReg, 0.0F, mask);
+        for (uint32_t partial = 0U; partial < partialCountAlign; ++partial) {
+            LoadAlign<float, LoadDist::DIST_NORM>(valueReg, lse + partial * rowStride);
+            Sub(valueReg, valueReg, maxReg, mask);
+            Exp(valueReg, valueReg, mask);
+            Add(sumReg, sumReg, valueReg, mask);
+            StoreAlign<float, StoreDist::DIST_NORM_B32>(
+                weights + partial * rowStride, valueReg, mask);
+        }
+        if constexpr (OutputLse) {
+            Log(valueReg, sumReg, mask);
+            Add(valueReg, valueReg, maxReg, mask);
+            StoreAlign<float, StoreDist::DIST_NORM_B32>(globalLse, valueReg, mask);
+        }
+
+        // The normalization loop reloads the unnormalized weights just stored.
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        for (uint32_t partial = 0U; partial < partialCountAlign; ++partial) {
+            LoadAlign<float, LoadDist::DIST_NORM>(valueReg, weights + partial * rowStride);
+            Div(valueReg, valueReg, sumReg, mask);
+            StoreAlign<float, StoreDist::DIST_NORM_B32>(
+                weights + partial * rowStride, valueReg, mask);
+        }
     }
 
     // Accumulate a batch of splits in vector registers, preserving split order
@@ -443,16 +442,12 @@ private:
 #endif
 
     AscendC::LocalTensor<float> lseUb_;
-    AscendC::LocalTensor<float> broadcastUb_;
     AscendC::LocalTensor<float> weightUb_;
-    AscendC::LocalTensor<float> lseMaxUb_;
-    AscendC::LocalTensor<float> lseSumUb_;
     AscendC::LocalTensor<float> globalLseUb_;
     AscendC::LocalTensor<float> lseStoreUb_;
     AscendC::LocalTensor<float> oInputUb_;
     AscendC::LocalTensor<float> oAccUb_;
     AscendC::LocalTensor<ElementO> oOutUb_;
-    AscendC::LocalTensor<uint8_t> reduceTmpUb_;
 };
 
 #endif
