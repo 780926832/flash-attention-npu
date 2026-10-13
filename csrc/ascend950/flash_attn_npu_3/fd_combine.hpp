@@ -25,7 +25,7 @@ public:
     static constexpr uint32_t FLOATS_PER_BLOCK = 8U;
     static constexpr uint32_t MAX_LSE_ELEMS = MAX_SPLIT_NUM * MAX_ROW_TILE;
     static constexpr uint32_t MAX_O_ELEMS = MAX_ROW_TILE * MAX_HEAD_DIM;
-    static constexpr uint32_t MAX_O_INPUT_ELEMS = MAX_SPLIT_NUM * MAX_HEAD_DIM;
+    static constexpr uint32_t MAX_O_INPUT_ELEMS = FD_COMBINE_O_INPUT_ELEMS;
     using Resource = Catlass::Arch::Resource<Catlass::Arch::Ascend950>;
 
     __aicore__ inline explicit FlashDecodeCombine950(Resource &resource)
@@ -53,6 +53,118 @@ public:
     }
 
     __aicore__ inline void operator()(FAIKernelParams const &params)
+    {
+#ifdef __DAV_VEC__
+        __gm__ FAInferTilingData *tiling =
+            reinterpret_cast<__gm__ FAInferTilingData *>(params.tiling);
+        constexpr uint32_t uniformMode = OutputLse ?
+            FD_COMBINE_UNIFORM_WITH_LSE : FD_COMBINE_UNIFORM_NO_LSE;
+        if ((tiling->fdCombineUseUniform & uniformMode) != 0U) {
+            RunUniform(params);
+            return;
+        }
+        AscendC::SetAtomicNone();
+        AscendC::SetMaskNorm();
+        AscendC::SetVectorMask<int8_t>(
+            static_cast<uint64_t>(-1), static_cast<uint64_t>(-1));
+
+        const uint32_t aivIdx = AscendC::GetBlockIdx();
+        // The caller has already completed partial writes and SyncAll on every
+        // launched AIC/AIV, including AIVs with no combine assignment.
+        if (aivIdx >= tiling->fdCombineAivNum) {
+            return;
+        }
+
+        AscendC::GlobalTensor<float> partialLse;
+        partialLse.SetGlobalBuffer((__gm__ float *)(
+            params.workSpace + tiling->fdPartialLseOffset));
+        AscendC::GlobalTensor<float> partialO;
+        partialO.SetGlobalBuffer((__gm__ float *)(
+            params.workSpace + tiling->fdPartialOOffset));
+        AscendC::GlobalTensor<ElementO> output;
+        output.SetGlobalBuffer((__gm__ ElementO *)params.o);
+        AscendC::GlobalTensor<float> outputLse;
+        if constexpr (OutputLse) {
+            outputLse.SetGlobalBuffer((__gm__ float *)params.lse);
+        }
+        AscendC::GlobalTensor<int32_t> actualQ;
+        actualQ.SetGlobalBuffer((__gm__ int32_t *)params.actualQseqlen);
+        const uint32_t headDim = tiling->embeddingSizeV;
+        const uint32_t inputStride = RoundUp(headDim, FLOATS_PER_BLOCK);
+        // Keep the accumulator padded for the final low-precision output DMA.
+        const uint32_t dRound = RoundUp(headDim, 32U / sizeof(ElementO));
+        const uint32_t totalQ = OutputLse ?
+            static_cast<uint32_t>(actualQ.GetValue(tiling->batch)) : 0U;
+        const uint32_t combineIdx = tiling->fdCombineCoreSchedules[aivIdx].combineTaskIdx;
+        const uint32_t sourceSubBlock = tiling->fdCombineCoreSchedules[aivIdx].sourceSubBlock;
+        const uint32_t assignedStart = tiling->fdCombineCoreSchedules[aivIdx].sourceLocalRow;
+        const uint32_t assignedRows = tiling->fdCombineCoreSchedules[aivIdx].rowCount;
+        const uint32_t batchIdx = tiling->fdCombineTaskInfo[combineIdx].batchIdx;
+        const uint32_t qRows = tiling->fdCombineTaskInfo[combineIdx].qRows;
+        const uint32_t qHeadStart = tiling->fdCombineTaskInfo[combineIdx].qHeadStart;
+        const uint32_t groupRows = tiling->fdCombineTaskInfo[combineIdx].rowNum;
+        const uint32_t sourceRowSplit = Min(groupRows,
+            RoundUp(groupRows, FLOATS_PER_BLOCK) / FD_SOURCE_SUB_BLOCK_NUM);
+        // Host task geometry uses seqused_q, but packed storage follows cu-Q.
+        const uint32_t qTokenBase = static_cast<uint32_t>(actualQ.GetValue(batchIdx)) +
+            tiling->fdCombineTaskInfo[combineIdx].qStart;
+        const uint32_t partialCount = static_cast<uint32_t>(
+            tiling->fdCombineSchedules[combineIdx].partialCount);
+        const uint32_t firstPartial = static_cast<uint32_t>(
+            tiling->fdCombineSchedules[combineIdx].partialStart);
+        const uint32_t partialCountAlign = RoundUp(partialCount, FLOATS_PER_BLOCK);
+
+        for (uint32_t row = 0U; row < assignedRows; row += MAX_ROW_TILE) {
+            const uint32_t sourceLocalRow = assignedStart + row;
+            const uint32_t rowCount = Min(MAX_ROW_TILE, assignedRows - row);
+            const uint32_t rowStart =
+                (sourceSubBlock == 0U ? 0U : sourceRowSplit) + sourceLocalRow;
+            const uint32_t rowCountAlign = RoundUp(rowCount, FLOATS_PER_BLOCK);
+            PrepareWeights(partialLse, firstPartial, partialCount,
+                partialCountAlign, sourceSubBlock, sourceLocalRow,
+                rowCount, rowCountAlign, tiling->fdLseSubStride);
+            const uint32_t tileElems = rowCount * dRound;
+            AscendC::Duplicate(oAccUb_, 0.0F, tileElems);
+            AscendC::PipeBarrier<PIPE_V>();
+            const uint32_t inputPartialStride = rowCount * inputStride;
+            const uint32_t batchCapacity = MAX_O_INPUT_ELEMS / inputPartialStride;
+            for (uint32_t partial = 0U; partial < partialCount; partial += batchCapacity) {
+                const uint32_t batchCount = Min(batchCapacity, partialCount - partial);
+                const uint64_t partialOOffset =
+                    (static_cast<uint64_t>(firstPartial + partial) *
+                        tiling->fdRowCapacity + rowStart) * headDim;
+                LoadPartials(partialO, partialOOffset, batchCount, rowCount,
+                    headDim, inputStride, tiling->fdRowCapacity);
+                AccumulatePartials(
+                    (__ubuf__ float *)oAccUb_.GetPhyAddr(),
+                    (__ubuf__ float *)oInputUb_.GetPhyAddr(),
+                    (__ubuf__ float *)weightUb_.GetPhyAddr(partial * rowCountAlign),
+                    batchCount, rowCount, headDim, inputStride, dRound, rowCountAlign);
+                AscendC::PipeBarrier<PIPE_V>();
+            }
+            // Partial O and the weighted reduction stay FP32. Convert only
+            // the final result to the public output dtype.
+            if (std::is_same<ElementO, bfloat16_t>::value) {
+                AscendC::Cast(oOutUb_, oAccUb_, AscendC::RoundMode::CAST_RINT, tileElems);
+            } else {
+                AscendC::Cast(oOutUb_, oAccUb_, AscendC::RoundMode::CAST_NONE, tileElems);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+            StoreOutput(output, oOutUb_, rowStart, rowCount, qRows,
+                qHeadStart, qTokenBase, tiling->numHeads, headDim, dRound);
+            if constexpr (OutputLse) {
+                StoreLse(outputLse, rowStart, rowCount, qRows,
+                    qHeadStart, qTokenBase, totalQ);
+            }
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+#endif
+    }
+
+private:
+    // Preserve the original mapping and DMA/VF sequence for small or uniform
+    // workloads selected by the host policy. All AIVs have passed SyncAll.
+    __aicore__ inline void RunUniform(FAIKernelParams const &params)
     {
 #ifdef __DAV_VEC__
         AscendC::SetAtomicNone();
@@ -206,7 +318,6 @@ public:
 #endif
     }
 
-private:
 #ifdef __DAV_VEC__
     __aicore__ inline void LoadPartials(
         AscendC::GlobalTensor<float> &partialO, uint64_t offset,

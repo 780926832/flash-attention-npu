@@ -29,6 +29,7 @@ def main():
     args = parser.parse_args()
     cases = json.loads(args.cases_json.read_text())
     native_record = json.loads(args.manifest.read_text())[args.variant]
+    combine_disabled = native_record.get("combine_disabled", args.variant == "no-combine")
     sys.path.insert(0, str(Path(native_record["native"]).parent))
     import flash_attn_npu_3_950 as native
     from flash_attn_npu_3 import flash_attn_with_kvcache
@@ -61,7 +62,7 @@ def main():
             for _ in range(calls):
                 result = flash_attn_with_kvcache(**inputs, return_softmax_lse=lse)
                 torch.npu.synchronize()
-            if args.variant != "no-combine":
+            if not combine_disabled:
                 out = (result[0] if lse else result).cpu()
                 torch.testing.assert_close(out.float(), expected, atol=.03, rtol=.02)
                 err = out.float() - expected
