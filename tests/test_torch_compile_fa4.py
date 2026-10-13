@@ -1,4 +1,3 @@
-import pytest
 from torch_compile_utils import (
     run_fixed_compile_test,
     load_api,
@@ -11,18 +10,16 @@ from torch_compile_utils import (
 def test_fa4_910_scheduler_metadata_torch_compile_correctness():
     require_soc("910")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface")
 
     run_metadata_compile_test(
         api,
         expected_sizes={
-            "NO_MASK": 2376,
-            "CAUSAL": 2376,
-            "LOCAL_LEFT": 2376,
-            "LOCAL_RIGHT": 2376,
-            "FULL_WINDOW_COLLAPSE": 2376,
+            "NO_MASK": 2336,
+            "CAUSAL": 2336,
+            "LOCAL_LEFT": 2336,
+            "LOCAL_RIGHT": 2336,
+            "FULL_WINDOW_COLLAPSE": 2336,
         },
         tiling_only_metadata=True,
     )
@@ -31,9 +28,7 @@ def test_fa4_910_scheduler_metadata_torch_compile_correctness():
 def test_fa4_910_varlen_torch_compile_correctness():
     require_soc("910")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface")
 
     run_varlen_compile_test(
         api,
@@ -44,35 +39,26 @@ def test_fa4_910_varlen_torch_compile_correctness():
 def test_fa4_950_scheduler_metadata_torch_compile_correctness():
     require_soc("950")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface_950"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface_950")
 
-    run_metadata_compile_test(
-        api,
-        expected_sizes=None,
-        tiling_only_metadata=True
-    )
+    run_metadata_compile_test(api, expected_sizes=None, tiling_only_metadata=True)
 
 
 def test_fa4_950_varlen_torch_compile_correctness():
     require_soc("950")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface_950"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface_950")
 
     run_varlen_compile_test(
         api,
         backward=False,
     )
 
+
 def test_fa4_950_varlen_asymmetric_causal_torch_compile_correctness():
     require_soc("950")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface_950"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface_950")
 
     run_varlen_compile_test(
         api,
@@ -82,17 +68,15 @@ def test_fa4_950_varlen_asymmetric_causal_torch_compile_correctness():
         causal=True,
     )
 
-def test_fa4_910_fixed_torch_compile_correctness():
 
+def test_fa4_910_fixed_torch_compile_correctness():
     """
     Verify FA4 fixed-length API correctness.
     """
 
     require_soc("910")
 
-    api = load_api(
-        "flash_attn_npu_4.flash_attn_npu_interface"
-    )
+    api = load_api("flash_attn_npu_4.flash_attn_npu_interface")
 
     run_fixed_compile_test(
         api,
