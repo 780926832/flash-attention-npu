@@ -281,7 +281,7 @@ def flash_attn_func(
         - Q, K, V must have contiguous last dimension (stride(-1) == 1).
         - batch_size > 0.
         - softcap >= 0 (0.0 disables; not supported on Ascend 950).
-        - dropout_p == 0 (not supported).
+        - 0.0 <= dropout_p < 1.0; 0.0 disables dropout.
         - alibi_slopes not supported.
         - Backward: headdim in (0, 256]; Q and K must share the same headdim.
 
@@ -368,7 +368,7 @@ def flash_attn_varlen_func(
         - Q, K, V must have contiguous last dimension (stride(-1) == 1).
         - batch_size > 0.
         - softcap >= 0 (0.0 disables; not supported on Ascend 950).
-        - dropout_p == 0 (not supported).
+        - 0.0 <= dropout_p < 1.0; 0.0 disables dropout.
         - alibi_slopes not supported.
         - cu_seqlens_q / cu_seqlens_k / block_table must be int32 when provided.
         - Backward: headdim in (0, 256]; Q and K must share the same headdim.
