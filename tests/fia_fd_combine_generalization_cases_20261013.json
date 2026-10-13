@@ -1,0 +1,1276 @@
+{
+  "cases": [
+    {
+      "name": "q_1",
+      "q_len": 1,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_2",
+      "q_len": 2,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_3",
+      "q_len": 3,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_4",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_5",
+      "q_len": 5,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_6",
+      "q_len": 6,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_7",
+      "q_len": 7,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_8",
+      "q_len": 8,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_9",
+      "q_len": 9,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_10",
+      "q_len": 10,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_11",
+      "q_len": 11,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_12",
+      "q_len": 12,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_13",
+      "q_len": 13,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_14",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_15",
+      "q_len": 15,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_16",
+      "q_len": 16,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_4",
+      "q_len": 1,
+      "heads": 4,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_8",
+      "q_len": 1,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_16",
+      "q_len": 1,
+      "heads": 16,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_24",
+      "q_len": 1,
+      "heads": 24,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_32",
+      "q_len": 1,
+      "heads": 32,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_40",
+      "q_len": 1,
+      "heads": 40,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_48",
+      "q_len": 1,
+      "heads": 48,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_64",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_96",
+      "q_len": 1,
+      "heads": 96,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "heads_128",
+      "q_len": 1,
+      "heads": 128,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_1024",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        1024
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_2048",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        2048
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_3072",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        3072
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_4096",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        4096
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_4097",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        4097
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_6144",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        6144
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_8191",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8191
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_8193",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8193
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_12288",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        12288
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_16384",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        16384
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kv_32768",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        32768
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_1",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_2",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_3",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_4",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_5",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_6",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_7",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_8",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_12",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_16",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_28",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "batch_32",
+      "q_len": 4,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_128",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        128,
+        128,
+        128
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_256",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        256,
+        256,
+        256
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_512",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        512,
+        512,
+        512
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_1024",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        1024,
+        1024,
+        1024
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_4096",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        4096,
+        4096,
+        4096
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "skew_8192",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        8192,
+        8192,
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kvheads_2",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 2,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kvheads_4",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 4,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kvheads_8",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 8,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "kvheads_16",
+      "q_len": 1,
+      "heads": 64,
+      "kv_heads": 16,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_single_2",
+      "q_len": 2,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_single_8",
+      "q_len": 8,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_single_16",
+      "q_len": 16,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_single_32",
+      "q_len": 32,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "q_single_64",
+      "q_len": 64,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192
+      ],
+      "dtype": "bf16"
+    },
+    {
+      "name": "varq_ascending",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16",
+      "q_lengths": [
+        1,
+        4,
+        8,
+        16
+      ]
+    },
+    {
+      "name": "varq_descending",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8192,
+        2048,
+        2048,
+        2048
+      ],
+      "dtype": "bf16",
+      "q_lengths": [
+        16,
+        8,
+        4,
+        1
+      ]
+    },
+    {
+      "name": "varq_matched",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        1024,
+        2048,
+        4096,
+        8192
+      ],
+      "dtype": "bf16",
+      "q_lengths": [
+        1,
+        4,
+        8,
+        16
+      ]
+    },
+    {
+      "name": "varq_tails",
+      "q_len": 14,
+      "heads": 8,
+      "kv_heads": 1,
+      "dim": 128,
+      "kv_lengths": [
+        8193,
+        1025,
+        2049,
+        4097
+      ],
+      "dtype": "bf16",
+      "q_lengths": [
+        3,
+        7,
+        11,
+        15
+      ]
+    }
+  ],
+  "sweeps": {
+    "q": [
+      {
+        "value": 1,
+        "case": "q_1"
+      },
+      {
+        "value": 2,
+        "case": "q_2"
+      },
+      {
+        "value": 3,
+        "case": "q_3"
+      },
+      {
+        "value": 4,
+        "case": "q_4"
+      },
+      {
+        "value": 5,
+        "case": "q_5"
+      },
+      {
+        "value": 6,
+        "case": "q_6"
+      },
+      {
+        "value": 7,
+        "case": "q_7"
+      },
+      {
+        "value": 8,
+        "case": "q_8"
+      },
+      {
+        "value": 9,
+        "case": "q_9"
+      },
+      {
+        "value": 10,
+        "case": "q_10"
+      },
+      {
+        "value": 11,
+        "case": "q_11"
+      },
+      {
+        "value": 12,
+        "case": "q_12"
+      },
+      {
+        "value": 13,
+        "case": "q_13"
+      },
+      {
+        "value": 14,
+        "case": "q_14"
+      },
+      {
+        "value": 15,
+        "case": "q_15"
+      },
+      {
+        "value": 16,
+        "case": "q_16"
+      }
+    ],
+    "heads": [
+      {
+        "value": 4,
+        "case": "heads_4"
+      },
+      {
+        "value": 8,
+        "case": "heads_8"
+      },
+      {
+        "value": 16,
+        "case": "heads_16"
+      },
+      {
+        "value": 24,
+        "case": "heads_24"
+      },
+      {
+        "value": 32,
+        "case": "heads_32"
+      },
+      {
+        "value": 40,
+        "case": "heads_40"
+      },
+      {
+        "value": 48,
+        "case": "heads_48"
+      },
+      {
+        "value": 64,
+        "case": "heads_64"
+      },
+      {
+        "value": 96,
+        "case": "heads_96"
+      },
+      {
+        "value": 128,
+        "case": "heads_128"
+      }
+    ],
+    "kv": [
+      {
+        "value": 1024,
+        "case": "kv_1024"
+      },
+      {
+        "value": 2048,
+        "case": "kv_2048"
+      },
+      {
+        "value": 3072,
+        "case": "kv_3072"
+      },
+      {
+        "value": 4096,
+        "case": "kv_4096"
+      },
+      {
+        "value": 4097,
+        "case": "kv_4097"
+      },
+      {
+        "value": 6144,
+        "case": "kv_6144"
+      },
+      {
+        "value": 8191,
+        "case": "kv_8191"
+      },
+      {
+        "value": 8192,
+        "case": "heads_64"
+      },
+      {
+        "value": 8193,
+        "case": "kv_8193"
+      },
+      {
+        "value": 12288,
+        "case": "kv_12288"
+      },
+      {
+        "value": 16384,
+        "case": "kv_16384"
+      },
+      {
+        "value": 32768,
+        "case": "kv_32768"
+      }
+    ],
+    "batch": [
+      {
+        "value": 1,
+        "case": "batch_1"
+      },
+      {
+        "value": 2,
+        "case": "batch_2"
+      },
+      {
+        "value": 3,
+        "case": "batch_3"
+      },
+      {
+        "value": 4,
+        "case": "batch_4"
+      },
+      {
+        "value": 5,
+        "case": "batch_5"
+      },
+      {
+        "value": 6,
+        "case": "batch_6"
+      },
+      {
+        "value": 7,
+        "case": "batch_7"
+      },
+      {
+        "value": 8,
+        "case": "batch_8"
+      },
+      {
+        "value": 12,
+        "case": "batch_12"
+      },
+      {
+        "value": 16,
+        "case": "batch_16"
+      },
+      {
+        "value": 28,
+        "case": "batch_28"
+      },
+      {
+        "value": 32,
+        "case": "batch_32"
+      }
+    ],
+    "skew": [
+      {
+        "value": 128,
+        "case": "skew_128"
+      },
+      {
+        "value": 256,
+        "case": "skew_256"
+      },
+      {
+        "value": 512,
+        "case": "skew_512"
+      },
+      {
+        "value": 1024,
+        "case": "skew_1024"
+      },
+      {
+        "value": 2048,
+        "case": "q_14"
+      },
+      {
+        "value": 4096,
+        "case": "skew_4096"
+      },
+      {
+        "value": 8192,
+        "case": "skew_8192"
+      }
+    ],
+    "kvheads": [
+      {
+        "value": 1,
+        "case": "heads_64"
+      },
+      {
+        "value": 2,
+        "case": "kvheads_2"
+      },
+      {
+        "value": 4,
+        "case": "kvheads_4"
+      },
+      {
+        "value": 8,
+        "case": "kvheads_8"
+      },
+      {
+        "value": 16,
+        "case": "kvheads_16"
+      }
+    ],
+    "q_single": [
+      {
+        "value": 1,
+        "case": "heads_8"
+      },
+      {
+        "value": 2,
+        "case": "q_single_2"
+      },
+      {
+        "value": 4,
+        "case": "batch_1"
+      },
+      {
+        "value": 8,
+        "case": "q_single_8"
+      },
+      {
+        "value": 16,
+        "case": "q_single_16"
+      },
+      {
+        "value": 32,
+        "case": "q_single_32"
+      },
+      {
+        "value": 64,
+        "case": "q_single_64"
+      }
+    ],
+    "varq": [
+      {
+        "value": "ascending",
+        "case": "varq_ascending"
+      },
+      {
+        "value": "descending",
+        "case": "varq_descending"
+      },
+      {
+        "value": "matched",
+        "case": "varq_matched"
+      },
+      {
+        "value": "tails",
+        "case": "varq_tails"
+      }
+    ]
+  }
+}

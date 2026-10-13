@@ -1,0 +1,572 @@
+[
+  {
+    "name": "heads_8",
+    "family": "heads",
+    "value": 8,
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_16",
+    "family": "heads",
+    "value": 16,
+    "q_len": 1,
+    "heads": 16,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_24",
+    "family": "heads",
+    "value": 24,
+    "q_len": 1,
+    "heads": 24,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_32",
+    "family": "heads",
+    "value": 32,
+    "q_len": 1,
+    "heads": 32,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_40",
+    "family": "heads",
+    "value": 40,
+    "q_len": 1,
+    "heads": 40,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_64",
+    "family": "heads",
+    "value": 64,
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "heads_128",
+    "family": "heads",
+    "value": 128,
+    "q_len": 1,
+    "heads": 128,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "q_1",
+    "family": "q",
+    "value": 1,
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "q_4",
+    "family": "q",
+    "value": 4,
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "q_8",
+    "family": "q",
+    "value": 8,
+    "q_len": 8,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "q_9",
+    "family": "q",
+    "value": 9,
+    "q_len": 9,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "q_14",
+    "family": "q",
+    "value": 14,
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "q_16",
+    "family": "q",
+    "value": 16,
+    "q_len": 16,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "d_65",
+    "family": "d",
+    "value": 65,
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 65,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  {
+    "name": "d_127",
+    "family": "d",
+    "value": 127,
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 127,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  {
+    "name": "d_128",
+    "family": "d",
+    "value": 128,
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  {
+    "name": "d_255",
+    "family": "d",
+    "value": 255,
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 255,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  {
+    "name": "d_256",
+    "family": "d",
+    "value": 256,
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 256,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  {
+    "name": "split_mixed_8",
+    "family": "split_mixed",
+    "value": 8,
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 8,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      8,
+      8,
+      8,
+      4
+    ]
+  },
+  {
+    "name": "skew_4096",
+    "family": "skew",
+    "value": 4096,
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      4096,
+      4096,
+      4096
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "aic": 28,
+    "partials": [
+      11,
+      6,
+      7,
+      6
+    ]
+  },
+  {
+    "name": "varq_tails",
+    "family": "varq",
+    "value": "tails",
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8193,
+      1025,
+      2049,
+      4097
+    ],
+    "num_splits": 16,
+    "dtype": "bf16",
+    "q_lengths": [
+      3,
+      7,
+      11,
+      15
+    ],
+    "aic": 28,
+    "partials": [
+      6,
+      3,
+      6,
+      15
+    ]
+  },
+  {
+    "name": "fp16_single",
+    "family": "fp16",
+    "value": "single",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "num_splits": 16,
+    "dtype": "fp16",
+    "aic": 16,
+    "partials": [
+      16
+    ]
+  },
+  {
+    "name": "fp16_mixed",
+    "family": "fp16",
+    "value": "mixed",
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "num_splits": 16,
+    "dtype": "fp16",
+    "aic": 28,
+    "partials": [
+      16,
+      4,
+      4,
+      4
+    ]
+  },
+  {
+    "name": "fp16_tail",
+    "family": "fp16",
+    "value": "tail",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 255,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "num_splits": 16,
+    "dtype": "fp16",
+    "aic": 28,
+    "partials": [
+      16,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ]
+  }
+]

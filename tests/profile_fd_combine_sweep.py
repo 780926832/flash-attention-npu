@@ -9,7 +9,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
+import time
 
 import torch
 import torch_npu
@@ -26,6 +29,9 @@ def main():
     parser.add_argument("--warmup", type=int, default=100)
     parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--check-device-occupancy", action="store_true")
+    parser.add_argument("--occupancy-wait", type=float, default=120,
+                        help="Seconds to wait for foreign processes before benchmark calls")
     args = parser.parse_args()
     cases = json.loads(args.cases_json.read_text())
     native_record = json.loads(args.manifest.read_text())[args.variant]
@@ -52,6 +58,27 @@ def main():
                     warmup=args.warmup if args.mode == "profile" else 0,
                     measured=args.iterations if args.mode == "profile" else 1)
     print(json.dumps(metadata), flush=True)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    def check_occupancy(label):
+        if not args.check_device_occupancy:
+            return
+        device = int(os.environ["ASCEND_RT_VISIBLE_DEVICES"])
+        started = time.monotonic()
+        while True:
+            snapshot = subprocess.check_output(["npu-smi", "info"], text=True)
+            args.output.with_name(f"device-{label}-calls.log").write_text(snapshot)
+            active = {int(pid) for card, pid in re.findall(
+                r'^\|\s*(\d+)\s*\|\s*(\d+)\s*\|', snapshot, re.MULTILINE) if int(card) == device}
+            if os.getpid() not in active:
+                raise RuntimeError("Cannot confirm benchmark process in device occupancy snapshot")
+            if not active - {os.getpid()}:
+                return
+            if label != "before" or time.monotonic() - started >= args.occupancy_wait:
+                raise RuntimeError("FOREIGN_NPU_PROCESS: " + str(sorted(active - {os.getpid()})))
+            time.sleep(1)
+
+    check_occupancy("before")
     outputs, checks = {}, []
     calls = metadata["warmup"] + metadata["measured"]
     for case in cases:
@@ -59,6 +86,7 @@ def main():
         mode_outputs = []
         for lse in (True, False):
             label = f"{case['name']}-lse{int(lse)}"
+            print(json.dumps(dict(case_begin=case["name"], return_lse=lse)), flush=True)
             for _ in range(calls):
                 result = flash_attn_with_kvcache(**inputs, return_softmax_lse=lse)
                 torch.npu.synchronize()
@@ -84,6 +112,7 @@ def main():
             print(json.dumps(record), flush=True)
         if mode_outputs:
             assert torch.equal(*mode_outputs), case["name"]
+    check_occupancy("after")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(dict(metadata=metadata, outputs=outputs, accuracy=checks), args.output)
     args.output.with_suffix(".json").write_text(json.dumps(
