@@ -1,17 +1,16 @@
 # Copyright (c) 2023, Tri Dao.
 # Modified by Minghua Shen, 2026
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import math
 import torch
-import torch.nn as nn
-import os
 
 # isort: off
 # We need to import the kernels after importing torch
 from . import flash_attn_npu
 # isort: on
+
 
 def maybe_contiguous(x):
     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
@@ -19,6 +18,15 @@ def maybe_contiguous(x):
 
 def round_multiple(x, m):
     return (x + m - 1) // m * m
+
+
+def _validate_varlen_query(q, cu_seqlens_q):
+    if q.dim() != 3:
+        raise RuntimeError(f"q must be 3-dimensional; got {q.dim()} dimensions")
+    if cu_seqlens_q.numel() <= 1:
+        raise RuntimeError("batch size must be positive")
+    if q.shape[0] == 0:
+        raise RuntimeError("total_q must be positive (q must contain at least one query token)")
 
 
 _HEADDIM_BWD_ALIGN = 64
@@ -30,8 +38,7 @@ def _pad_bwd_headdim(dout, q, k, v, out, head_size_og):
     """
     if dout.size(-1) != head_size_og:
         raise ValueError(
-            f"dout headdim ({dout.size(-1)}) must equal original q/k/v "
-            f"headdim ({head_size_og})"
+            f"dout headdim ({dout.size(-1)}) must equal original q/k/v headdim ({head_size_og})"
         )
     qkv_out_headdims = [t.size(-1) for t in (q, k, v, out)]
     if len(set(qkv_out_headdims)) != 1:
@@ -41,9 +48,7 @@ def _pad_bwd_headdim(dout, q, k, v, out, head_size_og):
         )
     ctx_headdim = qkv_out_headdims[0]
     if ctx_headdim <= 0 or ctx_headdim > 256:
-        raise ValueError(
-            f"headdim must be in (0, 256], got {ctx_headdim} "
-        )
+        raise ValueError(f"headdim must be in (0, 256], got {ctx_headdim} ")
     target = round_multiple(ctx_headdim, _HEADDIM_BWD_ALIGN)
 
     def _pad(t):
@@ -57,7 +62,6 @@ def _pad_bwd_headdim(dout, q, k, v, out, head_size_og):
     return _pad(dout), _pad(q), _pad(k), _pad(v), _pad(out), head_size_og
 
 
-
 # torch.compile() support is only enabled for pytorch >= 2.4
 # The reason for this is that we are using the new custom_op and register_fake
 # APIs, which support inplace modification of inputs in the function itself
@@ -65,23 +69,30 @@ if torch.__version__ >= "2.4.0":
     _torch_custom_op_wrapper = torch.library.custom_op
     _torch_register_fake_wrapper = torch.library.register_fake
 else:
+
     def noop_custom_op_wrapper(name, fn=None, /, *, mutates_args, device_types=None, schema=None):
         def wrap(func):
             return func
+
         if fn is None:
             return wrap
         return fn
+
     def noop_register_fake_wrapper(op, fn=None, /, *, lib=None, _stacklevel=1):
         def wrap(func):
             return func
+
         if fn is None:
             return wrap
         return fn
+
     _torch_custom_op_wrapper = noop_custom_op_wrapper
     _torch_register_fake_wrapper = noop_register_fake_wrapper
 
 
-@_torch_custom_op_wrapper("flash_attn_npu::_flash_attn_forward", mutates_args=(), device_types="npu")
+@_torch_custom_op_wrapper(
+    "flash_attn_npu::_flash_attn_forward", mutates_args=(), device_types="npu"
+)
 def _flash_attn_forward(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -135,13 +146,30 @@ def _flash_attn_forward_fake(
     batch_size, seqlen_q, num_heads, head_size = q.shape
     seqlen_k = k.shape[1]
     out = torch.empty_like(q)
-    softmax_lse = torch.empty((batch_size, num_heads, seqlen_q), dtype=torch.float32, device=q.device, layout=q.layout)
+    softmax_lse = torch.empty(
+        (batch_size, num_heads, seqlen_q), dtype=torch.float32, device=q.device, layout=q.layout
+    )
     p = torch.empty((0,), dtype=q.dtype, device=q.device, layout=q.layout)
     if return_softmax:
         if torch.cuda.is_available() and torch.version.hip:
-            p = torch.empty((batch_size, num_heads, seqlen_q, seqlen_k), dtype=q.dtype, device=q.device, layout=q.layout)
+            p = torch.empty(
+                (batch_size, num_heads, seqlen_q, seqlen_k),
+                dtype=q.dtype,
+                device=q.device,
+                layout=q.layout,
+            )
         else:
-            p = torch.empty((batch_size, num_heads, round_multiple(seqlen_q, 128), round_multiple(seqlen_k, 128)), dtype=q.dtype, device=q.device, layout=q.layout)
+            p = torch.empty(
+                (
+                    batch_size,
+                    num_heads,
+                    round_multiple(seqlen_q, 128),
+                    round_multiple(seqlen_k, 128),
+                ),
+                dtype=q.dtype,
+                device=q.device,
+                layout=q.layout,
+            )
     rng_state = torch.empty((2,), dtype=torch.int64, device=q.device)
 
     return out, softmax_lse, p, rng_state
@@ -150,7 +178,9 @@ def _flash_attn_forward_fake(
 _wrapped_flash_attn_forward = _flash_attn_forward
 
 
-@_torch_custom_op_wrapper("flash_attn_npu::_flash_attn_varlen_forward", mutates_args=(), device_types="npu")
+@_torch_custom_op_wrapper(
+    "flash_attn_npu::_flash_attn_varlen_forward", mutates_args=(), device_types="npu"
+)
 def _flash_attn_varlen_forward(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -226,26 +256,46 @@ def _flash_attn_varlen_forward_fake(
     zero_tensors: bool = False,
     scheduler_metadata: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    _validate_varlen_query(q, cu_seqlens_q)
     q, k, v = [maybe_contiguous(x) for x in (q, k, v)]
-    paged_kv = block_table is not None
     batch_size = cu_seqlens_q.numel() - 1
     total_q, num_heads, _ = q.shape
-    
+
     out = torch.empty_like(q)
-    softmax_lse = torch.empty((num_heads, total_q), dtype=torch.float32, device=q.device, layout=q.layout)
+    softmax_lse = torch.empty(
+        (num_heads, total_q), dtype=torch.float32, device=q.device, layout=q.layout
+    )
     p = torch.empty((0,), dtype=q.dtype, device=q.device, layout=q.layout)
     if return_softmax:
         if torch.cuda.is_available() and torch.version.hip:
-            p = torch.empty((batch_size, num_heads, max_seqlen_q, max_seqlen_k), dtype=q.dtype, device=q.device, layout=q.layout)
+            p = torch.empty(
+                (batch_size, num_heads, max_seqlen_q, max_seqlen_k),
+                dtype=q.dtype,
+                device=q.device,
+                layout=q.layout,
+            )
         else:
-            p = torch.empty((batch_size, num_heads, round_multiple(max_seqlen_q, 128), round_multiple(max_seqlen_k, 128)), dtype=q.dtype, device=q.device, layout=q.layout)
+            p = torch.empty(
+                (
+                    batch_size,
+                    num_heads,
+                    round_multiple(max_seqlen_q, 128),
+                    round_multiple(max_seqlen_k, 128),
+                ),
+                dtype=q.dtype,
+                device=q.device,
+                layout=q.layout,
+            )
     rng_state = torch.empty((2,), dtype=torch.int64, device=q.device)
     return out, softmax_lse, p, rng_state
+
 
 _wrapped_flash_attn_varlen_forward = _flash_attn_varlen_forward
 
 
-@_torch_custom_op_wrapper("flash_attn_npu::_flash_attn_backward", mutates_args=("dq", "dk", "dv"), device_types="npu")
+@_torch_custom_op_wrapper(
+    "flash_attn_npu::_flash_attn_backward", mutates_args=("dq", "dk", "dv"), device_types="npu"
+)
 def _flash_attn_backward(
     dout: torch.Tensor,
     q: torch.Tensor,
@@ -327,17 +377,27 @@ def _flash_attn_backward_fake(
         dv = torch.empty_like(v)
     batch_size, seqlen_q, num_heads, _ = q.shape
     if torch.cuda.is_available() and torch.version.hip:
-        softmax_d = torch.empty((batch_size, num_heads, seqlen_q), device=q.device, dtype=torch.float32)
+        softmax_d = torch.empty(
+            (batch_size, num_heads, seqlen_q), device=q.device, dtype=torch.float32
+        )
     else:
-        softmax_d = torch.empty((batch_size, num_heads, round_multiple(seqlen_q, 128)), device=q.device, dtype=torch.float32)
-    
+        softmax_d = torch.empty(
+            (batch_size, num_heads, round_multiple(seqlen_q, 128)),
+            device=q.device,
+            dtype=torch.float32,
+        )
+
     return softmax_d
 
 
 _wrapped_flash_attn_backward = _flash_attn_backward
 
 
-@_torch_custom_op_wrapper("flash_attn_npu::_flash_attn_varlen_backward", mutates_args=("dq", "dk", "dv"), device_types="npu")
+@_torch_custom_op_wrapper(
+    "flash_attn_npu::_flash_attn_varlen_backward",
+    mutates_args=("dq", "dk", "dv"),
+    device_types="npu",
+)
 def _flash_attn_varlen_backward(
     dout: torch.Tensor,
     q: torch.Tensor,
@@ -440,8 +500,10 @@ def _flash_attn_varlen_backward_fake(
     if torch.cuda.is_available() and torch.version.hip:
         softmax_d = torch.empty((num_heads, total_q), device=q.device, dtype=torch.float32)
     else:
-        softmax_d = torch.empty((num_heads, total_q + 128 * batch_size), device=q.device, dtype=torch.float32)
-    
+        softmax_d = torch.empty(
+            (num_heads, total_q + 128 * batch_size), device=q.device, dtype=torch.float32
+        )
+
     return softmax_d
 
 
@@ -472,7 +534,7 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
             q = torch.nn.functional.pad(q, [0, 8 - head_size_og % 8])
             k = torch.nn.functional.pad(k, [0, 8 - head_size_og % 8])
             v = torch.nn.functional.pad(v, [0, 8 - head_size_og % 8])
-        out_padded, softmax_lse, S_dmask, rng_state =  _wrapped_flash_attn_forward(
+        out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
             q,
             k,
             v,
@@ -501,9 +563,7 @@ class FlashAttnQKVPackedFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         qkv_shape = q.shape[:-2] + (3, *q.shape[-2:])
         dqkv = torch.empty(qkv_shape, dtype=q.dtype, device=q.device)
         _wrapped_flash_attn_backward(
@@ -591,9 +651,7 @@ class FlashAttnVarlenQKVPackedFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         qkv_shape = q.shape[:-2] + (3, *q.shape[-2:])
         dqkv = torch.empty(qkv_shape, dtype=q.dtype, device=q.device)
         _wrapped_flash_attn_varlen_backward(
@@ -640,9 +698,7 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
         return_softmax,
         is_grad_enabled,
     ):
-        is_grad = is_grad_enabled and any(
-            x.requires_grad for x in [q, kv]
-        )
+        is_grad = is_grad_enabled and any(x.requires_grad for x in [q, kv])
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
         k, v = kv[:, :, 0].detach(), kv[:, :, 1].detach()
@@ -680,9 +736,7 @@ class FlashAttnKVPackedFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         dq = torch.empty_like(q)
         kv_shape = k.shape[:-2] + (2, *k.shape[-2:])
         dkv = torch.empty(kv_shape, dtype=k.dtype, device=k.device)
@@ -731,9 +785,7 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
         return_softmax,
         is_grad_enabled,
     ):
-        is_grad = is_grad_enabled and any(
-            x.requires_grad for x in [q, kv]
-        )
+        is_grad = is_grad_enabled and any(x.requires_grad for x in [q, kv])
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
         k, v = kv[:, 0].detach(), kv[:, 1].detach()
@@ -780,9 +832,7 @@ class FlashAttnVarlenKVPackedFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         dq = torch.empty_like(q)
         kv_shape = k.shape[:-2] + (2, *k.shape[-2:])
         dkv = torch.empty(kv_shape, dtype=k.dtype, device=k.device)
@@ -832,9 +882,7 @@ class FlashAttnFunc(torch.autograd.Function):
         return_softmax,
         is_grad_enabled,
     ):
-        is_grad = is_grad_enabled and any(
-            x.requires_grad for x in [q, k, v]
-        )
+        is_grad = is_grad_enabled and any(x.requires_grad for x in [q, k, v])
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
         head_size_og = q.size(3)
@@ -847,21 +895,24 @@ class FlashAttnFunc(torch.autograd.Function):
         # the AICPU so no D2H/H2D sync breaks the pipeline.
         batch_size, seqlen_q, num_heads, head_size = q.shape
         seqlen_k, num_heads_k = k.shape[1], k.shape[2]
-        cache_seqlens = torch.full(
-            (batch_size,), seqlen_k, dtype=torch.int32, device=q.device
-        )
+        cache_seqlens = torch.full((batch_size,), seqlen_k, dtype=torch.int32, device=q.device)
         if alibi_slopes is None:
             alibi_slopes_batch_stride = 0
         else:
             alibi_slopes_batch_stride = alibi_slopes.shape[1] if alibi_slopes.dim() == 2 else 0
         scheduler_metadata = get_scheduler_metadata(
-            batch_size, seqlen_q, seqlen_k, num_heads, num_heads_k, head_size,
+            batch_size,
+            seqlen_q,
+            seqlen_k,
+            num_heads,
+            num_heads_k,
+            head_size,
             cache_seqlens,
             qkv_dtype=q.dtype,
             causal=causal,
             window_size=window_size,
             softcap=softcap,
-            softmax_scale=softmax_scale, 
+            softmax_scale=softmax_scale,
             alibi_slopes_batch_stride=alibi_slopes_batch_stride,
         )
         out_padded, softmax_lse, S_dmask, rng_state = _wrapped_flash_attn_forward(
@@ -894,9 +945,7 @@ class FlashAttnFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
         _wrapped_flash_attn_backward(
             dout,
@@ -946,9 +995,8 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         block_table,
         is_grad_enabled,
     ):
-        is_grad = is_grad_enabled and any(
-            x.requires_grad for x in [q, k, v]
-        )
+        _validate_varlen_query(q, cu_seqlens_q)
+        is_grad = is_grad_enabled and any(x.requires_grad for x in [q, k, v])
         if softmax_scale is None:
             softmax_scale = q.shape[-1] ** (-0.5)
         head_size_og = q.size(2)
@@ -977,7 +1025,12 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         else:
             alibi_slopes_batch_stride = alibi_slopes.shape[1] if alibi_slopes.dim() == 2 else 0
         scheduler_metadata = get_scheduler_metadata(
-            batch_size, max_seqlen_q, max_seqlen_k, num_heads, num_heads_k, head_size,
+            batch_size,
+            max_seqlen_q,
+            max_seqlen_k,
+            num_heads,
+            num_heads_k,
+            head_size,
             cache_seqlens,
             qkv_dtype=q.dtype,
             cu_seqlens_q=cu_seqlens_q,
@@ -1028,9 +1081,7 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout, *args):
         q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, rng_state = ctx.saved_tensors
-        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(
-            dout, q, k, v, out, ctx.head_size_og
-        )
+        dout, q, k, v, out, head_size_og = _pad_bwd_headdim(dout, q, k, v, out, ctx.head_size_og)
         dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
         _wrapped_flash_attn_varlen_backward(
             dout,
@@ -1059,7 +1110,25 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         dq = dq[..., :head_size_og]  # We could have padded the head dimension
         dk = dk[..., :head_size_og]
         dv = dv[..., :head_size_og]
-        return dq, dk, dv, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+        return (
+            dq,
+            dk,
+            dv,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
 
 
 def flash_attn_qkvpacked_func(
@@ -1207,7 +1276,7 @@ def flash_attn_func(
     softmax_scale=None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
@@ -1284,7 +1353,7 @@ def flash_attn_varlen_qkvpacked_func(
     softmax_scale=None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
@@ -1353,7 +1422,7 @@ def flash_attn_varlen_kvpacked_func(
     softmax_scale=None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
@@ -1446,7 +1515,7 @@ def flash_attn_varlen_func(
     softmax_scale=None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     alibi_slopes=None,
     deterministic=False,
     return_attn_probs=False,
@@ -1543,7 +1612,7 @@ def flash_attn_with_kvcache(
     softmax_scale=None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0, # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     rotary_interleaved=True,
     alibi_slopes=None,
     num_splits=0,
@@ -1698,9 +1767,19 @@ def flash_attn_with_kvcache(
     return (out, softmax_lse) if return_softmax_lse else out
 
 
-def _validate_scheduler_metadata(scheduler_metadata, *, causal, window_size, softcap,
-                                 softmax_scale, seqlen_q, num_splits, block_table, k_cache,
-                                 alibi_slopes=None):
+def _validate_scheduler_metadata(
+    scheduler_metadata,
+    *,
+    causal,
+    window_size,
+    softcap,
+    softmax_scale,
+    seqlen_q,
+    num_splits,
+    block_table,
+    k_cache,
+    alibi_slopes=None,
+):
     """Reject scheduler_metadata created with arguments that do not match this
     call; the AICPU-written tiling bakes in the mask layout, paged geometry and
     softcap-divided softmax scale, including the requested split schedule."""
@@ -1720,7 +1799,8 @@ def _validate_scheduler_metadata(scheduler_metadata, *, causal, window_size, sof
         # The kernel reads the per-batch ALiBi stride from the baked tiling, so
         # it must match how this call indexes alibi_slopes.
         "alibi_slopes_batch_stride": (
-            0 if alibi_slopes is None
+            0
+            if alibi_slopes is None
             else (int(alibi_slopes.shape[1]) if alibi_slopes.dim() == 2 else 0)
         ),
     }
@@ -1747,6 +1827,8 @@ def _validate_scheduler_metadata(scheduler_metadata, *, causal, window_size, sof
         raise ValueError(
             "scheduler_metadata arguments do not match this call: " + "; ".join(mismatches)
         )
+
+
 # Real metadata contract:
 #   all mask types:
 #       shape = (2416,)
@@ -1756,6 +1838,8 @@ def _validate_scheduler_metadata(scheduler_metadata, *, causal, window_size, sof
 # Schema matches the V2 910 pybind signature in flash_api.cpp
 # (not the V3/V4 parameter lists).
 _SCHEDULER_METADATA_TILING_BYTES = 2416
+
+
 @torch.library.custom_op(
     "flash_attn_npu::_get_scheduler_metadata",
     mutates_args=(),
@@ -1816,9 +1900,9 @@ def _get_scheduler_metadata_op(
         "num_splits": int(num_splits),
     }
     return scheduler_metadata
-@_torch_register_fake_wrapper(
-    "flash_attn_npu::_get_scheduler_metadata"
-)
+
+
+@_torch_register_fake_wrapper("flash_attn_npu::_get_scheduler_metadata")
 def _get_scheduler_metadata_fake(
     batch_size: int,
     max_seqlen_q: int,
@@ -1844,8 +1928,15 @@ def _get_scheduler_metadata_fake(
         dtype=torch.uint8,
         device=cache_seqlens.device,
     )
+
+
 def get_scheduler_metadata(
-    batch_size, max_seqlen_q, max_seqlen_k, num_heads_q, num_heads_kv, headdim,
+    batch_size,
+    max_seqlen_q,
+    max_seqlen_k,
+    num_heads_q,
+    num_heads_kv,
+    headdim,
     cache_seqlens: torch.Tensor,
     qkv_dtype=torch.bfloat16,
     headdim_v=None,
@@ -1853,7 +1944,7 @@ def get_scheduler_metadata(
     page_size: Optional[int] = None,
     causal=False,
     window_size=(-1, -1),  # -1 means infinite context window
-    softcap=0.0,   # 0.0 means deactivated
+    softcap=0.0,  # 0.0 means deactivated
     softmax_scale=None,  # defaults to 1 / sqrt(headdim); must match the fwd call
     alibi_slopes_batch_stride=0,
     num_splits=0,  # 0 = auto, 1 = no KV split, >1 = requested KV split count

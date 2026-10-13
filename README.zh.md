@@ -358,6 +358,7 @@ def flash_attn_varlen_func(
         - dtype 仅支持 float16 / bfloat16；Q、K、V 的 dtype 必须一致。
         - Q、K、V 的最后一维必须连续（stride(-1) == 1）。
         - batch_size > 0。
+        - total_q > 0；Q 必须至少包含一个 query token。
         - softcap >= 0（0.0 表示关闭；Ascend 950 不支持 softcap）。
         - 0.0 <= dropout_p < 1.0；0.0 表示关闭 dropout。
         - 不支持 alibi_slopes。
@@ -620,6 +621,7 @@ def flash_attn_varlen_func(
         - dtype 仅支持 float16 / bfloat16；Q、K、V 的 dtype 必须一致。
         - Q、K、V 的最后一维必须连续（stride(-1) == 1）。
         - batch_size > 0。
+        - total_q > 0；Q 必须至少包含一个 query token。
         - softcap >= 0（0.0 表示关闭；Ascend 950 不支持 softcap）。
         - 不支持 alibi_slopes / FP8 descales / attention_chunk / pack_gqa。
         - cu_seqlens_q / cu_seqlens_k 若传入须为 int32。

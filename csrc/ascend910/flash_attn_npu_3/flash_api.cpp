@@ -167,6 +167,12 @@ std::vector<at::Tensor> mha_fwd(
     const c10::OptionalDeviceGuard device_guard(device_of(q));
     auto hostStart = std::chrono::steady_clock::now();
 
+    if (cu_seqlens_q_.has_value()) {
+        TORCH_CHECK(q.dim() == 3, "q must be 3-dimensional; got ", q.dim(), " dimensions");
+        TORCH_CHECK(cu_seqlens_q_->numel() > 1, "batch size must be positive");
+        TORCH_CHECK(q.size(0) > 0, "total_q must be positive (q must contain at least one query token)");
+    }
+
     auto q_dtype = q.dtype();
     bool is_bf16 = q_dtype == torch::kBFloat16;
     bool is_fp16 = q_dtype == torch::kFloat16;

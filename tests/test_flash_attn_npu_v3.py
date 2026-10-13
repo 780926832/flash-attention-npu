@@ -1,5 +1,8 @@
 # Copyright (c) 2026, Minghua Shen.
 
+from contextlib import nullcontext
+from torch._subclasses.fake_tensor import FakeTensorMode
+
 import os
 import torch
 import torch_npu
@@ -1212,6 +1215,129 @@ def test_fa_varlen_ops(
         assert_fa_close(dq_ag, dq_ref, dq_pt, softcap=softcap, name="dQ")
         assert_fa_close(dk_ag, dk_ref, dk_pt, softcap=softcap, name="dK")
         assert_fa_close(dv_ag, dv_ref, dv_pt, softcap=softcap, name="dV")
+
+
+def _varlen_validation_inputs(dtype):
+    return {
+        "q": torch.randn((2, 2, 32), dtype=dtype, device="npu"),
+        "k": torch.randn((3, 1, 32), dtype=dtype, device="npu"),
+        "v": torch.randn((3, 1, 32), dtype=dtype, device="npu"),
+        "cu_seqlens_q": torch.tensor([0, 2], dtype=torch.int32, device="npu"),
+        "cu_seqlens_k": torch.tensor([0, 3], dtype=torch.int32, device="npu"),
+        "max_seqlen_q": 2,
+        "max_seqlen_k": 3,
+    }
+
+
+_VARLEN_QUERY_ERRORS = {
+    "q_2d": "q must be 3-dimensional",
+    "q_4d": "q must be 3-dimensional",
+    "empty_batch": "batch size must be positive",
+    "empty_prefix": "batch size must be positive",
+    "empty_tokens": "total_q must be positive",
+}
+
+
+def _invalidate_varlen_query(inputs, case):
+    if case.endswith("_2d"):
+        name = case[0]
+        inputs[name] = inputs[name][..., 0].contiguous()
+    elif case == "q_4d":
+        inputs["q"] = inputs["q"].unsqueeze(0)
+    elif case in ("empty_batch", "empty_prefix", "empty_tokens"):
+        for name in ("q", "k", "v"):
+            inputs[name] = inputs[name][:0]
+        if case != "empty_tokens":
+            size = 1 if case == "empty_batch" else 0
+            for name in ("cu_seqlens_q", "cu_seqlens_k"):
+                inputs[name] = torch.zeros(size, dtype=torch.int32, device="npu")
+            inputs["max_seqlen_q"] = inputs["max_seqlen_k"] = 0
+        # Clearing Q/K/V can leave nonzero prefixes and max lengths in place.
+        # That case has zero tokens rather than an empty prefix batch.
+
+
+def _varlen_validation_forward(api, inputs, native=False):
+    import inspect
+
+    if native:
+        args = inspect.signature(api._flash_attn_forward_fake).bind(**inputs)
+        args.apply_defaults()
+        return api.flash_attn_npu_3.fwd(*args.arguments.values())
+    return api._flash_attn_forward(**inputs)
+
+
+@pytest.mark.skipif(
+    not torch_npu.npu.is_available() or "Ascend910" not in torch_npu.npu.get_device_name(),
+    reason="Ascend910 only",
+)
+class TestVarlenValidation:
+    @pytest.fixture
+    def api(self):
+        from flash_attn_npu_3 import flash_attn_npu_interface
+
+        return flash_attn_npu_interface
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize("execution", ["eager", "fake"])
+    @pytest.mark.parametrize("case", list(_VARLEN_QUERY_ERRORS))
+    def test_public_varlen_rejects_before_metadata(self, api, dtype, execution, case, monkeypatch):
+        def unexpected_metadata(*args, **kwargs):
+            pytest.fail("invalid inputs reached scheduler metadata creation")
+
+        monkeypatch.setattr(api, "_get_scheduler_metadata_op", unexpected_metadata)
+        with FakeTensorMode() if execution == "fake" else nullcontext():
+            inputs = _varlen_validation_inputs(dtype)
+            _invalidate_varlen_query(inputs, case)
+            with pytest.raises(RuntimeError, match=_VARLEN_QUERY_ERRORS[case]):
+                api.flash_attn_varlen_func(**inputs, window_size=(1, 0), num_splits=1)
+        if execution == "eager":
+            torch.npu.synchronize()
+
+    @pytest.mark.parametrize("case", ["q_2d", "empty_batch", "empty_tokens"])
+    @pytest.mark.parametrize("native", [False, True], ids=["fake-op", "native"])
+    def test_lowlevel_varlen_validation(self, api, case, native):
+        with nullcontext() if native else FakeTensorMode():
+            inputs = _varlen_validation_inputs(torch.float16)
+            _invalidate_varlen_query(inputs, case)
+            with pytest.raises(RuntimeError, match=_VARLEN_QUERY_ERRORS[case]):
+                _varlen_validation_forward(api, inputs, native=native)
+        if native:
+            torch.npu.synchronize()
+
+    @pytest.mark.parametrize("case", ["q_2d", "empty_batch", "empty_tokens"])
+    def test_v3_varlen_cache_fake_validation(self, api, case):
+        with FakeTensorMode():
+            inputs = _varlen_validation_inputs(torch.float16)
+            _invalidate_varlen_query(inputs, case)
+            inputs.pop("cu_seqlens_k")
+            inputs["k"] = torch.empty((1, 3, 1, 32), dtype=torch.float16, device="npu")
+            inputs["v"] = torch.empty_like(inputs["k"])
+            with pytest.raises(RuntimeError, match=_VARLEN_QUERY_ERRORS[case]):
+                api._flash_attn_forward(**inputs)
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize("execution", ["eager", "fake", "compile"])
+    def test_valid_swa_varlen(self, api, dtype, execution):
+        with FakeTensorMode() if execution == "fake" else nullcontext():
+            inputs = _varlen_validation_inputs(dtype)
+            forward = api.flash_attn_varlen_func
+            if execution == "compile":
+                forward = torch.compile(forward, backend="aot_eager", fullgraph=True, dynamic=True)
+            result = forward(**inputs, window_size=(1, 0), num_splits=1, return_attn_probs=True)
+            out, lse = result[:2]
+            assert out.shape == inputs["q"].shape
+            assert lse.shape == (2, 2)
+            if execution == "fake":
+                return
+        torch.npu.synchronize()
+        q, k, v = (inputs[name].cpu().unsqueeze(0) for name in ("q", "k", "v"))
+        rows = torch.arange(2).unsqueeze(1)
+        cols = torch.arange(3).unsqueeze(0)
+        center = rows + 3 - 2
+        mask = (cols < center - 1) | (cols > center)
+        ref, lse_ref, pt, lse_pt = ref_flash_attention_pair(q, k, v, 32**-0.5, mask, dtype)
+        assert_fa_close(out.cpu(), ref[0], pt[0], name="out")
+        assert_fa_close(lse.cpu(), lse_ref[0], lse_pt[0], name="lse")
 
 
 # flash_attn_with_kvcache test parameters (Ascend950 head_dim<=256 coverage, NPU only)
