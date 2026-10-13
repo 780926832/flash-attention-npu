@@ -64,7 +64,8 @@ def main():
                 torch.npu.synchronize()
             if not combine_disabled:
                 out = (result[0] if lse else result).cpu()
-                torch.testing.assert_close(out.float(), expected, atol=.03, rtol=.02)
+                atol, rtol = ((.005, .005) if case.get("dtype") == "fp16" else (.03, .02))
+                torch.testing.assert_close(out.float(), expected, atol=atol, rtol=rtol)
                 err = out.float() - expected
                 metrics = dict(out_max_abs=err.abs().max().item(),
                                out_rmse=err.square().mean().sqrt().item())

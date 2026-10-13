@@ -31,14 +31,20 @@ CASES = [
 
 def make_inputs(case):
     gen = torch.Generator().manual_seed(1)
-    batch, q_len, heads, dim = len(case["kv_lengths"]), case["q_len"], case["heads"], case["dim"]
-    pages = max(case["kv_lengths"]) // 128
+    batch, heads, dim = len(case["kv_lengths"]), case["heads"], case["dim"]
+    q_lengths = case.get("q_lengths", [case.get("q_len", 1)] * batch)
+    assert len(q_lengths) == batch and min(q_lengths) > 0
+    kv_heads = case.get("kv_heads", 1)
+    assert heads % kv_heads == 0
+    dtype = {"bf16": torch.bfloat16, "fp16": torch.float16}[case.get("dtype", "bf16")]
+    pages = (max(case["kv_lengths"]) + 127) // 128
+    cu_q = torch.tensor([0] + q_lengths, dtype=torch.int32).cumsum(0).int()
 
     def rand(shape):
-        return (-5 + 10 * torch.rand(shape, generator=gen)).bfloat16()
+        return (-5 + 10 * torch.rand(shape, generator=gen)).to(dtype)
 
-    q_cpu = rand((batch * q_len, heads, dim))
-    k_cpu = rand((batch * pages, 128, 1, dim))
+    q_cpu = rand((sum(q_lengths), heads, dim))
+    k_cpu = rand((batch * pages, 128, kv_heads, dim))
     v_cpu = rand(k_cpu.shape)
     fingerprint = hashlib.sha256(b"".join(
         x.view(torch.uint8).numpy().tobytes() for x in (q_cpu, k_cpu, v_cpu))).hexdigest()
@@ -46,17 +52,24 @@ def make_inputs(case):
         assert fingerprint == "3a556ea7c526c920233a2ec8a07f180acb6de6bb9e43ec0bded28abb0435b70f"
     references, lses = [], []
     for bi, kv_len in enumerate(case["kv_lengths"]):
-        q = q_cpu[bi * q_len:(bi + 1) * q_len].float().reshape(-1, dim)
-        k = k_cpu[bi * pages:(bi + 1) * pages].reshape(-1, dim)[:kv_len].float()
-        v = v_cpu[bi * pages:(bi + 1) * pages].reshape(-1, dim)[:kv_len].float()
-        scores = (q @ k.T) * dim ** -0.5
-        references.append((scores.softmax(-1) @ v).reshape(q_len, heads, dim))
-        lses.append(scores.logsumexp(-1).reshape(q_len, heads).T)
+        q_len = q_lengths[bi]
+        q = q_cpu[cu_q[bi]:cu_q[bi + 1]].float()
+        k = k_cpu[bi * pages:(bi + 1) * pages].reshape(-1, kv_heads, dim)[:kv_len].float()
+        v = v_cpu[bi * pages:(bi + 1) * pages].reshape(-1, kv_heads, dim)[:kv_len].float()
+        out, lse = [], []
+        for kh in range(kv_heads):
+            group = heads // kv_heads
+            query = q[:, kh * group:(kh + 1) * group].reshape(-1, dim)
+            scores = (query @ k[:, kh].T) * dim ** -0.5
+            out.append((scores.softmax(-1) @ v[:, kh]).reshape(q_len, group, dim))
+            lse.append(scores.logsumexp(-1).reshape(q_len, group).T)
+        references.append(torch.cat(out, dim=1))
+        lses.append(torch.cat(lse, dim=0))
     inputs = dict(q=q_cpu.npu(), k_cache=k_cpu.npu(), v_cache=v_cpu.npu(),
                   cache_seqlens=torch.tensor(case["kv_lengths"], dtype=torch.int32, device="npu"),
                   page_table=torch.arange(batch * pages, dtype=torch.int32, device="npu").reshape(batch, pages),
-                  cu_seqlens_q=torch.arange(batch + 1, dtype=torch.int32, device="npu") * q_len,
-                  max_seqlen_q=q_len, softmax_scale=dim ** -0.5, causal=False,
+                  cu_seqlens_q=cu_q.npu(),
+                  max_seqlen_q=max(q_lengths), softmax_scale=dim ** -0.5, causal=False,
                   window_size=(-1, -1), softcap=0., num_splits=16)
     return inputs, torch.cat(references), torch.cat(lses, dim=1), fingerprint
 
