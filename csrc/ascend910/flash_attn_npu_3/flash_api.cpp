@@ -43,6 +43,16 @@ extern __global__ __aicpu__ uint32_t ComputeFAMetadataV3(void* args);
 
 #define ACL_CHECK(expr) TORCH_CHECK((expr) == ACL_SUCCESS, #expr " failed")
 
+// Tensor sizes and scalar sequence bounds are int64_t. Validate them before
+// narrowing to the signed 32-bit dimensions used by the forward scheduler.
+static int32_t CheckedFwdDimension(int64_t value, const char* name)
+{
+    constexpr int64_t maxDimension = std::numeric_limits<int32_t>::max();
+    TORCH_CHECK(value >= 0 && value <= maxDimension, name, " must be in [0, ", maxDimension,
+                "] for the 32-bit forward scheduler; got ", value);
+    return static_cast<int32_t>(value);
+}
+
 struct FwdMaskDerivation {
     bool is_causal;
     bool is_local;
@@ -256,13 +266,6 @@ std::vector<at::Tensor> mha_fwd(
     if (paged_KV) {
         block_table = page_table_.value();
     }
-    if (out_.has_value()) {
-        out = out_.value();
-        TORCH_CHECK(out.dtype() == q_dtype, "output must have the same dtype as inputs");
-        TORCH_CHECK(out.stride(-1) == 1, "Output tensor must have contiguous last dimension");
-    } else {
-        out = torch::empty_like(q);
-    }
     const auto sizes = q.sizes();
 
     int batch_size = 0;
@@ -270,13 +273,13 @@ std::vector<at::Tensor> mha_fwd(
     int num_heads = 0;
     int head_size_og = 0;
     if (is_varlen_q) {
-        batch_size = cu_seqlens_q.size(0) - 1;
-        seqlen_q = static_cast<int>(max_seqlen_q_.value());
+        batch_size = CheckedFwdDimension(cu_seqlens_q.size(0) - 1, "batch_size");
+        seqlen_q = CheckedFwdDimension(max_seqlen_q_.value(), "max_seqlen_q");
         num_heads = sizes[1];
         head_size_og = sizes[2];
     } else {
-        batch_size = sizes[0];
-        seqlen_q = sizes[1];
+        batch_size = CheckedFwdDimension(sizes[0], "batch_size");
+        seqlen_q = CheckedFwdDimension(sizes[1], "seqlen_q");
         num_heads = sizes[2];
         head_size_og = sizes[3];
     }
@@ -301,6 +304,14 @@ std::vector<at::Tensor> mha_fwd(
     TORCH_CHECK(k.size(-1) == head_size_og, "query and key must have the same head dimension");
     TORCH_CHECK(v.size(-1) == head_size_og, "query and value must have the same head dimension");
     TORCH_CHECK(num_heads % num_heads_k == 0, "Number of heads in key/value must divide number of heads in query");
+
+    if (out_.has_value()) {
+        out = out_.value();
+        TORCH_CHECK(out.dtype() == q_dtype, "output must have the same dtype as inputs");
+        TORCH_CHECK(out.stride(-1) == 1, "Output tensor must have contiguous last dimension");
+    } else {
+        out = torch::empty_like(q);
+    }
 
     // If seqused_k_ was not provided, derive seqlens_k from tensor shapes or cu_seqlens_k
     if (!seqused_k_.has_value()) {

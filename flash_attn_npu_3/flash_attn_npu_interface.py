@@ -44,6 +44,13 @@ def round_multiple(x, m):
     return (x + m - 1) // m * m
 
 
+def _check_fwd_dimension(value, name):
+    if not 0 <= value <= 2**31 - 1:
+        raise RuntimeError(
+            f"{name} must be in [0, {2**31 - 1}] for the 32-bit forward scheduler; got {value}"
+        )
+
+
 _HEADDIM_BWD_ALIGN = 64
 
 
@@ -255,6 +262,10 @@ def _flash_attn_forward_fake(
         # batch mode: q is (batch_size, seqlen_q, num_heads, head_size)
         batch_size, seqlen_q, num_heads, head_size = q.shape
         total_q = batch_size * q.shape[1]
+
+    _check_fwd_dimension(batch_size, "batch_size")
+    _check_fwd_dimension(seqlen_q, "max_seqlen_q" if is_varlen_q else "seqlen_q")
+
     # Get value head dimension
     head_size_v = v.shape[-1]
 

@@ -4,6 +4,7 @@ from contextlib import nullcontext
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 import os
+import re
 import torch
 import torch_npu
 import pytest
@@ -1513,3 +1514,109 @@ def test_fa_kvcache_ops_with_hd_le_256(
         num_splits,
         new_kv=False,
     )
+
+
+_FWD_INT32_MAX = 2**31 - 1
+
+
+def _dimension_bound_error(name, value):
+    return re.escape(
+        f"{name} must be in [0, {_FWD_INT32_MAX}] for the 32-bit forward scheduler; got {value}"
+    )
+
+
+def _dimension_test_tensor(shape, dtype):
+    # A broadcast view represents the offending shape with only one head's
+    # storage. The host must reject it before allocating output or launching.
+    base = torch.empty((1,) * (len(shape) - 1) + (shape[-1],), dtype=dtype, device="npu")
+    return base.expand(shape)
+
+
+@pytest.mark.skipif(
+    not torch_npu.npu.is_available() or "Ascend910" not in torch_npu.npu.get_device_name(),
+    reason="Ascend910 only",
+)
+class TestQueryDimensionBounds:
+    @pytest.mark.parametrize("execution", ["eager", "fake"])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize("axis,name", [(0, "batch_size"), (1, "seqlen_q")])
+    @pytest.mark.parametrize("size", [2**31, 2**31 + 1, 2**32 + 1])
+    def test_query_dimension_overflow(self, execution, dtype, axis, name, size):
+        context = FakeTensorMode() if execution == "fake" else nullcontext()
+        with context:
+            shape = [1, 1, 1, 16]
+            shape[axis] = size
+            q = _dimension_test_tensor(shape, dtype)
+            k = _dimension_test_tensor((1, 1, 1, 16), dtype)
+            v = _dimension_test_tensor((1, 1, 1, 16), dtype)
+            with pytest.raises(RuntimeError, match=_dimension_bound_error(name, size)):
+                flash_attn_with_kvcache(q, k, v, num_splits=1)
+
+    @pytest.mark.parametrize("execution", ["eager", "fake"])
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize("max_seqlen_q", [-1, 2**31, 2**31 + 1, 2**32 + 1])
+    def test_varlen_sequence_bound_overflow(self, execution, dtype, max_seqlen_q):
+        context = FakeTensorMode() if execution == "fake" else nullcontext()
+        with context:
+            q = _dimension_test_tensor((1, 1, 16), dtype)
+            k = _dimension_test_tensor((1, 1, 1, 16), dtype)
+            v = _dimension_test_tensor((1, 1, 1, 16), dtype)
+            cu_q = torch.tensor([0, 1], dtype=torch.int32, device="npu")
+            with pytest.raises(
+                RuntimeError, match=_dimension_bound_error("max_seqlen_q", max_seqlen_q)
+            ):
+                flash_attn_with_kvcache(
+                    q, k, v, cu_seqlens_q=cu_q, max_seqlen_q=max_seqlen_q, num_splits=1
+                )
+
+    @pytest.mark.parametrize("axis,name", [(0, "batch_size"), (1, "seqlen_q")])
+    def test_native_overflow_with_preallocated_output(self, axis, name):
+        import inspect
+        from flash_attn_npu_3 import flash_attn_npu_interface as api
+
+        size = 2**31 + 1
+        shape = [1, 1, 1, 16]
+        shape[axis] = size
+        q = _dimension_test_tensor(shape, torch.float16)
+        k = _dimension_test_tensor((1, 1, 1, 16), torch.float16)
+        v = _dimension_test_tensor((1, 1, 1, 16), torch.float16)
+        out = torch.empty((1, 1, 1, 16), dtype=torch.float16, device="npu")
+        args = inspect.signature(api._flash_attn_forward_fake).bind(q, k, v, out_=out)
+        args.apply_defaults()
+        with pytest.raises(RuntimeError, match=_dimension_bound_error(name, size)):
+            api.flash_attn_npu_3.fwd(*args.arguments.values())
+
+    @pytest.mark.parametrize("axis", [0, 1])
+    def test_fake_int32_upper_bound_is_inclusive(self, axis):
+        with FakeTensorMode():
+            shape = [1, 1, 1, 16]
+            shape[axis] = _FWD_INT32_MAX
+            q = torch.empty(shape, dtype=torch.float16, device="npu")
+            k = torch.empty((1, 1, 1, 16), dtype=torch.float16, device="npu")
+            v = torch.empty_like(k)
+            out = flash_attn_with_kvcache(q, k, v, num_splits=1)
+            assert tuple(out.shape) == tuple(shape)
+
+    @pytest.mark.parametrize("axis,name", [(0, "batch_size"), (1, "seqlen_q")])
+    @pytest.mark.parametrize("dynamic", [False, True])
+    def test_compile_rejects_overflow_before_execution(self, axis, name, dynamic):
+        from flash_attn_npu_3 import flash_attn_npu_interface as api
+
+        size = 2**31 + 1
+        shape = [1, 1, 1, 16]
+        shape[axis] = size
+        q = _dimension_test_tensor(shape, torch.float16)
+        k = _dimension_test_tensor((1, 1, 1, 16), torch.float16)
+        v = _dimension_test_tensor((1, 1, 1, 16), torch.float16)
+        compiled = torch.compile(
+            api.flash_attn_with_kvcache, backend="aot_eager", fullgraph=True, dynamic=dynamic
+        )
+        # Dynamic tracing reports the symbolic dimension (e.g. s0). Eager and
+        # static tracing must report the original concrete value.
+        error = (
+            re.escape(f"{name} must be in [0, {_FWD_INT32_MAX}]")
+            if dynamic
+            else _dimension_bound_error(name, size)
+        )
+        with pytest.raises(RuntimeError, match=error):
+            compiled(q, k, v, num_splits=1)
