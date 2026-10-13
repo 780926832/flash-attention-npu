@@ -62,26 +62,11 @@ static at::Tensor GetSchedulerMetadataImpl(FAMetadataArgs args, const at::Tensor
     return meta;
 }
 
-at::Tensor get_scheduler_metadata(
-        int64_t batch_size,
-        int64_t max_seqlen_q,
-        int64_t num_heads_q,
-        int64_t num_heads_kv,
-        int64_t headdim,
-        int64_t headdim_v,
-        at::Tensor cache_seqlens,
-        std::optional<at::Tensor> seqlens_q,
-        std::optional<at::Tensor> cu_seqlens_k,
-        std::optional<int64_t> page_size,
-        std::optional<int64_t> num_blocks,
-        std::optional<int64_t> max_num_blocks_per_seq,
-        bool causal,
-        double softmax_scale,
-        double softcapValue,
-        int64_t num_splits,
-        int64_t max_seqlen_k,
-        int64_t window_size_left,
-        int64_t window_size_right)
+at::Tensor get_scheduler_metadata(int64_t batch_size, int64_t max_seqlen_q, int64_t num_heads_q, int64_t num_heads_kv,
+                                  int64_t headdim, int64_t headdim_v, at::Tensor cache_seqlens,
+                                  std::optional<at::Tensor> seqlens_q, std::optional<at::Tensor> cu_seqlens_k,
+                                  std::optional<int64_t> page_size, bool causal, bool hasSoftcap, int64_t num_splits,
+                                  int64_t max_seqlen_k, int64_t window_size_left, int64_t window_size_right)
 {
     const c10::OptionalDeviceGuard device_guard(device_of(cache_seqlens));
     TORCH_CHECK(cache_seqlens.dtype() == torch::kInt32, "cache_seqlens must have dtype int32");
@@ -119,14 +104,14 @@ at::Tensor get_scheduler_metadata(
     args.numHeadsK = static_cast<uint32_t>(num_heads_kv);
     args.embeddingSize = static_cast<uint32_t>(headdim);
     args.embeddingSizeV = static_cast<uint32_t>(headdim_v);
-    args.numBlocks = page_size.has_value() ? static_cast<uint32_t>(num_blocks.value_or(0)) : 0;
+    // Paged geometry comes per launch; derive a bound for the mask only.
     args.blockSize = ps;
-    args.maxNumBlocksPerBatch = page_size.has_value() ? static_cast<uint32_t>(max_num_blocks_per_seq.value_or(0)) : 0;
+    const uint32_t maxNumBlocksPerBatch =
+        page_size.has_value() ? ((static_cast<uint32_t>(max_seqlen_k) + ps - 1) / ps) : 0;
     args.maxQSeqlen = static_cast<uint32_t>(max_seqlen_q);
     // Match paged forward's mask selection using cache capacity.
     // AICPU adjusts windows using actual lengths.
-    const int64_t maskKvBound = page_size.has_value()
-        ? static_cast<int64_t>(args.maxNumBlocksPerBatch) * ps : max_seqlen_k;
+    const int64_t maskKvBound = page_size.has_value() ? static_cast<int64_t>(maxNumBlocksPerBatch) * ps : max_seqlen_k;
     FwdMaskDerivation maskDer = DeriveFwdMask(causal, window_size_left, window_size_right, max_seqlen_q, maskKvBound);
     args.maskType = maskDer.maskType;
     args.windowSizeLeft = static_cast<int32_t>(maskDer.window_left);
@@ -135,12 +120,8 @@ at::Tensor get_scheduler_metadata(
     args.isVarlen = is_varlen_q ? 1u : 0u;
     args.isVarlenKv = is_varlen_kv ? 1u : 0u;
     args.pagedKV = page_size.has_value() ? 1u : 0u;
-    if (softcapValue == 0.0f) {
-        args.softmaxScale = static_cast<float>(softmax_scale);
-    } else {
-        args.softmaxScale = static_cast<float>(softmax_scale) / static_cast<float>(softcapValue);
-    }
-    args.softcapValue = static_cast<float>(softcapValue);
+    // Schedule is scale/softcap independent; hasSoftcap is API parity only.
+    (void)hasSoftcap;
     return GetSchedulerMetadataImpl(args, cache_seqlens, seqlens_q);
 }
 
