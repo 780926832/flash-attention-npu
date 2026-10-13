@@ -74,12 +74,12 @@ def parse_log(path):
                 total_o_dma_calls=sum(c["o_dma_calls"] for c in cores),
                 tiles=[dict(splits=s, rows=r, count=n) for (s, r), n in sorted(tiles.items())],
                 cores=cores)
-            binary_match = re.search(r'bin path is (\S+\.o)', block)
-            if binary_match:
-                binary = Path(binary_match[1]).resolve()
-                record.update(binary=str(binary), sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
-                if metadata["custom_opp"]:
-                    assert binary.is_relative_to(Path(metadata["custom_opp"]).resolve())
+        binary_match = re.search(r'bin path is (\S+\.o)', block)
+        if binary_match:
+            binary = Path(binary_match[1]).resolve()
+            record.update(binary=str(binary), sha256=hashlib.sha256(binary.read_bytes()).hexdigest())
+            if metadata["custom_opp"]:
+                assert binary.is_relative_to(Path(metadata["custom_opp"]).resolve())
         records.append(record)
     assert len(records) == len(metadata["groups"])
     return dict(metadata=metadata, records=records)

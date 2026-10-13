@@ -40,6 +40,13 @@ struct splitNode {
 
 constexpr uint32_t MAX_FD_ACTIVE_CORE_NUM = 32U;
 constexpr uint32_t MAX_FD_COMBINE_TASK_NUM = 32U;
+constexpr uint32_t FD_COMBINE_ROW_TILE = 8U;
+constexpr uint32_t FD_SOURCE_SUB_BLOCK_NUM = 2U;
+constexpr uint32_t MAX_FD_COMBINE_AIV_NUM =
+    MAX_FD_ACTIVE_CORE_NUM * FD_SOURCE_SUB_BLOCK_NUM;
+constexpr uint32_t FD_COMBINE_O_INPUT_ELEMS = MAX_FD_ACTIVE_CORE_NUM * 256U;
+constexpr uint32_t FD_COMBINE_UNIFORM_NO_LSE = 1U;
+constexpr uint32_t FD_COMBINE_UNIFORM_WITH_LSE = 2U;
 
 struct FdDecodeSchedule {
     int32_t baseTaskStart;
@@ -53,6 +60,25 @@ struct FdCombineSchedule {
     int32_t firstCore;
     int32_t partialStart;
     int32_t partialCount;
+};
+
+// Output geometry follows used Q lengths. batchIdx selects the original cu-Q
+// storage offset at runtime, which may differ from the used-length prefix sum.
+struct FdCombineTaskInfo {
+    uint32_t batchIdx;
+    uint32_t qStart;
+    uint32_t qRows;
+    uint32_t qHeadStart;
+    uint32_t rowNum;
+};
+
+// One contiguous range in one source subblock per AIV. rowCount may exceed
+// FD_COMBINE_ROW_TILE; the kernel processes it in rounds of at most eight rows.
+struct FdCombineCoreSchedule {
+    uint32_t combineTaskIdx;
+    uint32_t sourceSubBlock;
+    uint32_t sourceLocalRow;
+    uint32_t rowCount;
 };
 
 struct FAInferTilingData {
@@ -104,8 +130,11 @@ struct FAInferTilingData {
     uint32_t fdPartialCapacity;
     uint32_t fdRowCapacity;
     uint32_t fdLseSubStride;
-    uint32_t fdCombineBlockDim;
-    uint32_t fdReserved;
+    uint32_t fdCombineRowNum;
+    // Share the original reserved word. At most 64 AIVs and two mode bits;
+    // keeping the policy beside main FD fields avoids another GM cache line.
+    uint16_t fdCombineAivNum;
+    uint16_t fdCombineUseUniform;
     uint64_t fdPartialLseOffset;
     uint64_t fdPartialOOffset;
     uint64_t fdWorkspaceEnd;
@@ -130,6 +159,10 @@ struct FAInferTilingData {
     uint32_t kL1BufNum;
     uint32_t vL1BufNum;
     uint32_t pL1BufNum;
+
+    // Append combine-only metadata to preserve all main-attention field offsets.
+    FdCombineTaskInfo fdCombineTaskInfo[MAX_FD_COMBINE_TASK_NUM];
+    FdCombineCoreSchedule fdCombineCoreSchedules[MAX_FD_COMBINE_AIV_NUM];
 
     // Getter functions
     uint32_t get_numHeads() const { return numHeads; }
@@ -161,7 +194,7 @@ struct FAInferTilingData {
     uint32_t get_needCoreNum() const { return needCoreNum; }
     uint32_t get_flashDecodeFlag() const { return flashDecodeFlag; }
     uint32_t get_fdActiveCoreNum() const { return fdActiveCoreNum; }
-    uint32_t get_fdCombineBlockDim() const { return fdCombineBlockDim; }
+    uint32_t get_fdCombineRowNum() const { return fdCombineRowNum; }
 
     // Setter functions
     void set_numHeads(uint32_t value) { numHeads = value; }

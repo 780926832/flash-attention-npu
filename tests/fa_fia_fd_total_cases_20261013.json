@@ -1,0 +1,601 @@
+[
+  {
+    "name": "q_1",
+    "family": "q",
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "q_4",
+    "family": "q",
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "q_8",
+    "family": "q",
+    "q_len": 8,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "q_9",
+    "family": "q",
+    "q_len": 9,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "q_14",
+    "family": "q",
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "q_16",
+    "family": "q",
+    "q_len": 16,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_8",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_16",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 16,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_32",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 32,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_40",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 40,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_64",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_96",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 96,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "heads_128",
+    "family": "heads",
+    "q_len": 1,
+    "heads": 128,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_1024",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_2048",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_4096",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      4096
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_6144",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      6144
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_8191",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8191
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_8193",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8193
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_16384",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      16384
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kv_32768",
+    "family": "kv",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      32768
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "batch_1",
+    "family": "batch",
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "batch_2",
+    "family": "batch",
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "batch_4",
+    "family": "batch",
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      8192,
+      8192,
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "batch_8",
+    "family": "batch",
+    "q_len": 4,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192,
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kvheads_2",
+    "family": "kvheads",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 2,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kvheads_4",
+    "family": "kvheads",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 4,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "kvheads_8",
+    "family": "kvheads",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 8,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "d_64",
+    "family": "d",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 64,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "d_96",
+    "family": "d",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 96,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "d_127",
+    "family": "d",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 127,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "d_128",
+    "family": "d",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "d_256",
+    "family": "d",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 256,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "bf16",
+    "num_splits": 0
+  },
+  {
+    "name": "varq_ascending",
+    "family": "varq",
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "bf16",
+    "num_splits": 0,
+    "q_lengths": [
+      1,
+      4,
+      8,
+      16
+    ]
+  },
+  {
+    "name": "varq_tails",
+    "family": "varq",
+    "q_len": 1,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8193,
+      1025,
+      2049,
+      4097
+    ],
+    "dtype": "bf16",
+    "num_splits": 0,
+    "q_lengths": [
+      3,
+      7,
+      11,
+      15
+    ]
+  },
+  {
+    "name": "fp16_single",
+    "family": "fp16",
+    "q_len": 1,
+    "heads": 64,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192
+    ],
+    "dtype": "fp16",
+    "num_splits": 0
+  },
+  {
+    "name": "fp16_mixed",
+    "family": "fp16",
+    "q_len": 14,
+    "heads": 8,
+    "kv_heads": 1,
+    "dim": 128,
+    "kv_lengths": [
+      8192,
+      2048,
+      2048,
+      2048
+    ],
+    "dtype": "fp16",
+    "num_splits": 0
+  },
+  {
+    "name": "fp16_d256",
+    "family": "fp16",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 256,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "fp16",
+    "num_splits": 0
+  },
+  {
+    "name": "fp16_tail",
+    "family": "fp16",
+    "q_len": 16,
+    "heads": 4,
+    "kv_heads": 1,
+    "dim": 255,
+    "kv_lengths": [
+      8192,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "dtype": "fp16",
+    "num_splits": 0
+  }
+]

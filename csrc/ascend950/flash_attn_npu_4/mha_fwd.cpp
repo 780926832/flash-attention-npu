@@ -353,9 +353,11 @@ mha_fwd(at::Tensor q,
         tiler.DoTiling(tilingData);
     }
 
-    // The 950 chunk-prefill driver overrides workSpaceSize to 128 MiB
+    const bool flashDecodeEnabled = tilingData.flashDecodeFlag != 0U;
+    // Retain the chunk-prefill workspace floor outside FD. FD only needs
+    // the FP32 partial O/LSE regions sized by the tiler.
     constexpr uint64_t WS_FLOOR = uint64_t(1024) * 1024 * 32 * 4;  // 128 MiB
-    if (tilingData.workSpaceSize < WS_FLOOR) {
+    if (!flashDecodeEnabled && tilingData.workSpaceSize < WS_FLOOR) {
         tilingData.workSpaceSize = WS_FLOOR;
     }
 
@@ -365,7 +367,6 @@ mha_fwd(at::Tensor q,
     auto workspace = at::empty(
         {static_cast<int64_t>(tilingData.workSpaceSize)},
         at::device(at::kPrivateUse1).dtype(at::kByte));
-    const bool flashDecodeEnabled = tilingData.flashDecodeFlag != 0U;
 
     at::Tensor softmaxlse = at::empty({0}, at::device(at::kPrivateUse1).dtype(at::kFloat));
     if (return_lse && is_varlen_q) {
@@ -377,11 +378,6 @@ mha_fwd(at::Tensor q,
     }
     if (return_lse) {
         softmaxlse.fill_(std::numeric_limits<float>::infinity());
-    }
-    at::Tensor fd_lse;
-    if (flashDecodeEnabled && !return_lse) {
-        fd_lse = at::empty({num_heads, sizes[0]},
-                           at::device(at::kPrivateUse1).dtype(at::kFloat));
     }
 
     // ============================================================
@@ -409,9 +405,10 @@ mha_fwd(at::Tensor q,
     auto kDev = static_cast<uint8_t*>(k.data_ptr());
     auto vDev = static_cast<uint8_t*>(v.data_ptr());
     auto oDev = static_cast<uint8_t*>(out.data_ptr());
+    // FD merges workspace partial LSE; final LSE is optional.
     auto lseDev = return_lse
         ? static_cast<uint8_t*>(softmaxlse.data_ptr())
-        : (flashDecodeEnabled ? static_cast<uint8_t*>(fd_lse.data_ptr()) : oDev);
+        : oDev;
     auto wsDev = static_cast<uint8_t*>(workspace.data_ptr());
     auto tilDev = static_cast<uint8_t*>(tiling_dev.data_ptr());
 
@@ -464,8 +461,8 @@ mha_fwd(at::Tensor q,
 
     const FwdLaunchArgs fwdArgs{
         is_bf16, fmt, mask_category, paged_KV,
-        enableDN, return_lse, is_softcap, flashDecodeEnabled,
-        tilingData.fdCombineBlockDim, launchBlockDim, aclStream,
+        enableDN, return_lse, is_softcap,
+        launchBlockDim, aclStream,
         qDev, kDev, vDev, maskDev, blockTableDev,
         oDev, lseDev, qSeqDev, kvSeqDev,
         seqUsedQDev, seqUsedKvDev,
