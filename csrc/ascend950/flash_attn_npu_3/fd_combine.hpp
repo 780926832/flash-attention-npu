@@ -123,6 +123,12 @@ public:
             PrepareWeights(partialLse, firstPartial, partialCount,
                 partialCountAlign, sourceSubBlock, sourceLocalRow,
                 rowCount, rowCountAlign, tiling->fdLseSubStride);
+            if constexpr (OutputLse) {
+                // LSE is ready before O reduction. Its separate UB buffers
+                // remain live until the end of this row tile.
+                StoreLse(outputLse, rowStart, rowCount, qRows,
+                    qHeadStart, qTokenBase, totalQ);
+            }
             const uint32_t tileElems = rowCount * dRound;
             AscendC::Duplicate(oAccUb_, 0.0F, tileElems);
             AscendC::PipeBarrier<PIPE_V>();
@@ -153,8 +159,7 @@ public:
             StoreOutput(output, oOutUb_, rowStart, rowCount, qRows,
                 qHeadStart, qTokenBase, tiling->numHeads, headDim, dRound);
             if constexpr (OutputLse) {
-                StoreLse(outputLse, rowStart, rowCount, qRows,
-                    qHeadStart, qTokenBase, totalQ);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
             }
         }
         AscendC::PipeBarrier<PIPE_ALL>();
@@ -278,6 +283,10 @@ private:
                 PrepareWeights(partialLse, firstPartial, partialCount,
                     partialCountAlign, sourceSubBlock, sourceLocalRow,
                     rowCount, rowCountAlign, tiling->fdLseSubStride);
+                if constexpr (OutputLse) {
+                    StoreLse(outputLse, rowStart, rowCount, qRows,
+                        qHeadStart, qTokenBase, totalQ);
+                }
                 const uint32_t tileElems = rowCount * dRound;
                 AscendC::Duplicate(oAccUb_, 0.0F, tileElems);
                 AscendC::PipeBarrier<PIPE_V>();
@@ -308,8 +317,7 @@ private:
                 StoreOutput(output, oOutUb_, rowStart, rowCount, qRows,
                     qHeadStart, qTokenBase, tiling->numHeads, headDim, dRound);
                 if constexpr (OutputLse) {
-                    StoreLse(outputLse, rowStart, rowCount, qRows,
-                        qHeadStart, qTokenBase, totalQ);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
                 }
             }
             workBase += tilesPerTask;
@@ -488,6 +496,8 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
     }
 
+    // Submit asynchronously; the caller waits for MTE3_V EVENT_ID1 after O
+    // writeback, before either LSE buffer can be reused by the next row tile.
     __aicore__ inline void StoreLse(
         AscendC::GlobalTensor<float> &outputLse,
         uint32_t rowStart, uint32_t rowCount, uint32_t qRows,
@@ -499,7 +509,6 @@ private:
             AscendC::DataCopyPad(outputLse[qHeadStart + rowStart], globalLseUb_,
                 AscendC::DataCopyExtParams(1, rowCount * sizeof(float), 0, 0, 0));
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
             return;
         }
 
@@ -531,7 +540,6 @@ private:
             }
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID1);
     }
 
     __aicore__ inline static uint32_t RoundUp(uint32_t value, uint32_t alignment)
