@@ -288,15 +288,12 @@ std::vector<at::Tensor> mha_fwd(
     const int page_block_size = !paged_KV ? 128 : k.size(1);
     const int num_heads_k = k.dim() == 3 ? k.size(1) : k.size(2);
     TORCH_CHECK(batch_size > 0, "batch size must be positive");
-    // V3 keeps the original <=256 path untouched. D=512 is enabled only for
-    // the SplitFuse production shape: TND varlen-Q + paged KV, no append-KV.
+    // Keep the original 1..256 support tier and add 512 as a separate tier.
+    // D=512 follows the same layout/KV routing matrix as the original path:
+    // varlen-Q selects TND and BSND otherwise; paged K/V and dense/varlen K/V
+    // are selected independently by page_table/cu_seqlens_k.
     if (head_size_og > 256) {
-        TORCH_CHECK(head_size_og == 512, "FlashAttention only supports head dimension at most 256, or exactly 512 "
-                                         "for the TND + paged-KV varlen path");
-        TORCH_CHECK(is_varlen_q, "head dimension 512 requires varlen-Q (TND) layout");
-        TORCH_CHECK(paged_KV, "head dimension 512 requires paged KV cache");
-        TORCH_CHECK(!appendKV, "head dimension 512 does not support append-KV");
-        TORCH_CHECK(!is_varlen_kv, "head dimension 512 requires paged KV cache, not varlen-KV");
+        TORCH_CHECK(head_size_og == 512, "FlashAttention only supports head dimension at most 256, or exactly 512");
     } else {
         TORCH_CHECK(head_size_og >= 1 && head_size_og <= 256,
                     "FlashAttention only supports head dimension in [1, 256]");

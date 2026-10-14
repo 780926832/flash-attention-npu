@@ -273,18 +273,25 @@ class FAInferKernel {
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID7);
 
         const bool headDimSplit = embed > NUM_256;
-        uint32_t kDynNum = L1_HEAD_DIM_SLICE;
+        groupSize = qHeads / kvHeads;
+        const bool compactDecodeL1 = flashDecodeFlag == 0U && embed == 512U && embedV == 512U && kvNewSeqlen == 0U &&
+                                     maxQSeqlen * groupSize <= 64U;
+        kvStackLen = MAX_KV_STACK_LEN;
+        uint32_t kDynNum = NUM_256;
         uint32_t nDynNum = L1_D512_KV_TILE;
-        uint32_t qL1DynNum = embed;
-        uint32_t kPVDynNum = L1_D512_KV_TILE;
+        uint32_t qL1DynNum = RoundUp(embed, FaiKenel::BLOCK_SIZE);
+        uint32_t kPVDynNum = NUM_256;
         uint32_t vL1Stages = DOUBLE_BUFFER;
-        uint32_t vSegLen = L1_D512_KV_TILE;
+        uint32_t vSegLen = NUM_256;
         uint32_t vSliceWidth = L1_HEAD_DIM_SLICE;
+        uint32_t qL1Rows = Q_TILE_CEIL;
+        uint32_t pL1Rows = BlockMmadPV::L1TileShape::M;
+        uint32_t pL1Stages = DOUBLE_BUFFER;
         if (!headDimSplit) {
             // Preserve the production <=256 layout.
             kDynNum = RoundUp(embed, NUM_128);
             kDynNum = kDynNum < NUM_256 ? NUM_256 : kDynNum;
-            uint32_t maxQKPL1Size = L1_MAX_SIZE - embedV * MAX_KV_STACK_LEN * sizeof(ElementV);
+            uint32_t maxQKPL1Size = L1_MAX_SIZE - embedV * kvStackLen * sizeof(ElementV);
             uint32_t maxQL1Size = Q_TILE_CEIL * kDynNum * sizeof(ElementQ);
             uint32_t maxNDynNum =
                 ((maxQKPL1Size - maxQL1Size) / kDynNum / sizeof(ElementV) / DOUBLE_BUFFER) / NUM_32 * NUM_32;
@@ -293,22 +300,35 @@ class FAInferKernel {
             qL1DynNum = kDynNum;
             kPVDynNum = nDynNum * kDynNum / BlockMmadPV::L1TileShape::M;
             vL1Stages = 1U;
-            vSegLen = MAX_KV_STACK_LEN;
+            vSegLen = kvStackLen;
             vSliceWidth = embedV;
+        } else if (compactDecodeL1) {
+            qL1Rows = 64U;
+            pL1Rows = 64U;
+            pL1Stages = 1U;
+            kPVDynNum = kvStackLen;
         }
 
         blockMmadQK.SetPingPongState(&pingPongState);
         blockMmadPV.SetPingPongState(&pingPongState);
 
-        uint32_t L1_QK_SIZE = BlockMmadQK::L1TileShape::M * qL1DynNum * sizeof(ElementQ);
-        uint32_t kPVPoolSize = BlockMmadPV::L1TileShape::M * kPVDynNum * sizeof(ElementP) * DOUBLE_BUFFER;
+        uint32_t L1_QK_SIZE = qL1Rows * qL1DynNum * sizeof(ElementQ);
+        uint32_t qkKPoolSize = nDynNum * kDynNum * sizeof(ElementK) * DOUBLE_BUFFER;
+        uint32_t kPVPoolSize = pL1Rows * kPVDynNum * sizeof(ElementP) * pL1Stages;
         uint32_t vPoolSize = vL1Stages * vSegLen * vSliceWidth * sizeof(ElementV);
         // Append-KV QK writeback staging (ND copy of the new-K sub-tile), placed after
         // the QK/PV shared K/P region and the PV V region (the K and P tiles share one
         // L1 region across the QK/PV phases, so it must not be counted twice).
-        uint32_t ndCopyL1Offset = L1_QK_SIZE + kPVPoolSize + vPoolSize;
-        blockMmadQK.init(resource, nDynNum, kDynNum, qL1DynNum, MAX_KV_STACK_LEN, 0, ndCopyL1Offset);
-        blockMmadPV.init(resource, nDynNum, kPVDynNum, MAX_KV_STACK_LEN, L1_QK_SIZE, vL1Stages, vSegLen, vSliceWidth);
+        uint32_t pBufOffset = compactDecodeL1 ? (L1_QK_SIZE + qkKPoolSize) : L1_QK_SIZE;
+        uint32_t vBufOffset = pBufOffset + kPVPoolSize;
+        uint32_t ndCopyL1Offset = compactDecodeL1 ? (vBufOffset + vPoolSize) : (L1_QK_SIZE + kPVPoolSize + vPoolSize);
+        blockMmadQK.init(resource, nDynNum, kDynNum, qL1Rows, qL1DynNum, kvStackLen, 0, ndCopyL1Offset);
+        if (compactDecodeL1) {
+            blockMmadPV.initCompactDecode(resource, pL1Rows, kvStackLen, pBufOffset, vBufOffset);
+        } else {
+            blockMmadPV.init(resource, nDynNum, kPVDynNum, kvStackLen, L1_QK_SIZE, vL1Stages, vSegLen, vSliceWidth,
+                             ndCopyL1Offset);
+        }
 #endif
 #ifdef __DAV_C220_VEC__
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
@@ -380,11 +400,10 @@ class FAInferKernel {
                 uint32_t curQNBlockNumTmp = qNBlockNumPerGroupTmp * kvHeads;
                 uint32_t curQSBlockTileTmp = GetQSBlockTile(kvSeqlenCur);
                 uint32_t curQSBlockNumTmp = CeilDiv(qSeqlenCur, curQSBlockTileTmp);
-                uint32_t curKSBlockNumTmp = CeilDiv(kvSeqlenCur, MAX_KV_STACK_LEN);
+                uint32_t curKSBlockNumTmp = CeilDiv(kvSeqlenCur, kvStackLen);
                 if (kvNewSeqlen != 0U) {
-                    curKSBlockNumTmp =
-                        CeilDiv(static_cast<uint32_t>(gActualKvseqlen.GetValue(BIdx)), MAX_KV_STACK_LEN) +
-                        CeilDiv(kvNewSeqlen, MAX_KV_STACK_LEN);
+                    curKSBlockNumTmp = CeilDiv(static_cast<uint32_t>(gActualKvseqlen.GetValue(BIdx)), kvStackLen) +
+                                       CeilDiv(kvNewSeqlen, kvStackLen);
                 }
 
                 int32_t stN1IdxNow = (BIdx == startBIdx) ? (int32_t)startN1Idx : 0;
@@ -636,9 +655,9 @@ class FAInferKernel {
         uint32_t qNBlockNumPerGroup = CeilDiv(groupSize, curQNBlockTile);
         uint32_t curQSBlockTile = GetQSBlockTile(kvSeqlen);
         uint32_t curQSBlockNum = CeilDiv(qSeqlen, curQSBlockTile);
-        uint32_t curKSBlockNum = CeilDiv(kvSeqlen, MAX_KV_STACK_LEN);
+        uint32_t curKSBlockNum = CeilDiv(kvSeqlen, kvStackLen);
         if (appendKVFlag) {
-            curKSBlockNum = CeilDiv(kvSeqlenOld, MAX_KV_STACK_LEN) + CeilDiv(kvNewSeqlen, MAX_KV_STACK_LEN);
+            curKSBlockNum = CeilDiv(kvSeqlenOld, kvStackLen) + CeilDiv(kvNewSeqlen, kvStackLen);
         }
 
         uint32_t qNBlockIdxCurGroup = qNBlockIdx % qNBlockNumPerGroup;
@@ -688,19 +707,19 @@ class FAInferKernel {
             int64_t causalKvEnd = static_cast<int64_t>((qSBlockIdx + 1U) * curQSBlockTile) + diffS;
             causalKvEnd = causalKvEnd < 0 ? 0 : causalKvEnd;
             noSkipKvS = AscendC::Std::min(causalKvEnd, static_cast<int64_t>(kvSeqlen));
-            kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
+            kvSLoopNumTotal = CeilDiv(noSkipKvS, kvStackLen);
             invalidPrefixEndRow = qSeqlen > kvSeqlen ? static_cast<int32_t>(qSeqlen - kvSeqlen) : invalidPrefixEndRow;
         } else if (maskType == 2U) {
             int32_t leftPointwindowSizeLeft = kvSeqlen;
             int32_t leftPointwindowSizeRight = 0;
             if (windowSizeLeft < 0 && windowSizeLeft * (-1) >= qSeqlen) {
-                kvStart = kvSeqlen / MAX_KV_STACK_LEN + 1;
+                kvStart = kvSeqlen / kvStackLen + 1;
             } else if (windowSizeLeft != WINDOW_SIZE_INT_MAX) {
                 leftPointwindowSizeLeft = kvSeqlen - qSeqlen - windowSizeLeft;
                 windowSizeLeftStartLen = qSBlockIdx * curQSBlockTile + leftPointwindowSizeLeft;
                 windowSizeLeftEndLen = qSBlockIdx * curQSBlockTile + qSBlockSize + leftPointwindowSizeLeft;
                 kvStart = AscendC::Std::max(static_cast<int32_t>(0), windowSizeLeftStartLen) /
-                          static_cast<int32_t>(MAX_KV_STACK_LEN);
+                          static_cast<int32_t>(kvStackLen);
                 notPreMask = false;
             } else {
                 kvStart = 0;
@@ -712,14 +731,14 @@ class FAInferKernel {
                 windowSizeRightStartLen = qSBlockIdx * curQSBlockTile + leftPointwindowSizeRight;
                 windowSizeRightEndLen = qSBlockIdx * curQSBlockTile + qSBlockSize + leftPointwindowSizeRight;
                 int32_t nsk = AscendC::Std::min(static_cast<int32_t>(kvSeqlen),
-                                                RoundUp(windowSizeRightEndLen, static_cast<int32_t>(MAX_KV_STACK_LEN)));
+                                                RoundUp(windowSizeRightEndLen, static_cast<int32_t>(kvStackLen)));
                 nsk = nsk <= 0 ? static_cast<int32_t>(kvSeqlen) : nsk;
                 noSkipKvS = static_cast<uint32_t>(nsk);
-                kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
+                kvSLoopNumTotal = CeilDiv(noSkipKvS, kvStackLen);
                 notNextMask = false;
             } else {
                 noSkipKvS = kvSeqlen;
-                kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
+                kvSLoopNumTotal = CeilDiv(noSkipKvS, kvStackLen);
             }
             if (windowSizeLeftEndLen > static_cast<int32_t>(kvSeqlen) && windowSizeLeft != WINDOW_SIZE_INT_MAX) {
                 invalidSuffixStartRow = kvSeqlen - leftPointwindowSizeLeft;
@@ -728,7 +747,7 @@ class FAInferKernel {
             }
         } else {
             noSkipKvS = kvSeqlen;
-            kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
+            kvSLoopNumTotal = CeilDiv(noSkipKvS, kvStackLen);
         }
 
         // Match FA GPU split-KV: n_block_min/max = split ∩ window (do not overwrite SWA).
@@ -743,12 +762,12 @@ class FAInferKernel {
         uint32_t kvLoopNumTotalNew = 0;
         uint32_t kvSLoopNumTotalOld = kvSLoopNumTotal;
         if (appendKVFlag) {
-            kvStartOld = CeilDiv(kvSeqlenOld, MAX_KV_STACK_LEN);
+            kvStartOld = CeilDiv(kvSeqlenOld, kvStackLen);
             kvSLoopNumTotalOld =
                 CeilDiv(AscendC::Std::max((int64_t)0, AscendC::Std::min(static_cast<int64_t>(noSkipKvS),
                                                                         static_cast<int64_t>(kvSeqlenOld))),
-                        (int64_t)MAX_KV_STACK_LEN);
-            kvLoopNumTotalNew = CeilDiv(kvNewSeqlen, MAX_KV_STACK_LEN);
+                        (int64_t)kvStackLen);
+            kvLoopNumTotalNew = CeilDiv(kvNewSeqlen, kvStackLen);
             kvSLoopNumTotal = kvSLoopNumTotalOld + kvLoopNumTotalNew;
             kvEnd = kvSLoopNumTotal;
             // winKvEnd must be the per-phase total (v3 captures it after
@@ -768,9 +787,9 @@ class FAInferKernel {
 
         int32_t stackSeqCount = 0;
         uint32_t preKVNum = PRE_LAUNCH;
-        uint32_t blockStackNum = (MAX_KV_STACK_LEN - 1 + pagedBlockSize) / pagedBlockSize;
-        uint32_t stackSeqTile = MAX_KV_STACK_LEN;
-        uint32_t stackSeqTilePad = MAX_KV_STACK_LEN;
+        uint32_t blockStackNum = (kvStackLen - 1 + pagedBlockSize) / pagedBlockSize;
+        uint32_t stackSeqTile = kvStackLen;
+        uint32_t stackSeqTilePad = kvStackLen;
         uint32_t taskStackCount = 0;
 
         const bool isEmptyTask = kvStart >= kvEnd;
@@ -807,13 +826,13 @@ class FAInferKernel {
                 auto gQKSrc = isAppendBlock ? gKNew : gK;
                 const uint64_t qkSrcOffset = isAppendBlock ? gmOffsetKNew : gmOffsetK;
                 const uint64_t qkCacheOffset =
-                    doCopyback ? static_cast<uint64_t>(kvSeqlenOld) + kvSIdxLocal * MAX_KV_STACK_LEN : 0;
+                    doCopyback ? static_cast<uint64_t>(kvSeqlenOld) + kvSIdxLocal * kvStackLen : 0;
                 const uint32_t curStackTileMod = issuedStackCount % STACK_SLOTS;
                 StackDescriptor& desc = descriptors[curStackTileMod];
                 // Bound split tails by the fixed QK/PV workspace capacity.
                 desc.stackSeqTile = AscendC::Std::min(
-                    MAX_KV_STACK_LEN, GetStackSeqTile(isAppendBlock, kvSIdx, kvSIdxLocal, kvLoopNumTotalNew,
-                                                      kvSLoopNumTotalOld, noSkipKvS, kvSeqlenOld, kvNewSeqlen));
+                    kvStackLen, GetStackSeqTile(isAppendBlock, kvSIdx, kvSIdxLocal, kvLoopNumTotalNew,
+                                                kvSLoopNumTotalOld, noSkipKvS, kvSeqlenOld, kvNewSeqlen, kvStackLen));
 
                 desc.gmOffsetV = gmOffsetV;
                 // Delayed PV retains this stack's source, cache destination and writeback owner.
@@ -870,8 +889,7 @@ class FAInferKernel {
                 LayoutP layOutP(rowNum, desc.stackSeqTile, stackSeqTilePad);
                 LayoutMask layOutMask(COMP_TRIU_MASK_DIM_LEN, COMP_TRIU_MASK_DIM_LEN);
                 uint64_t gmOffsetP = gmOffsetS;
-                uint32_t kvSStartIdx =
-                    isAppendBlock ? kvSeqlenOld + kvSIdxLocal * MAX_KV_STACK_LEN : kvSIdx * MAX_KV_STACK_LEN;
+                uint32_t kvSStartIdx = isAppendBlock ? kvSeqlenOld + kvSIdxLocal * kvStackLen : kvSIdx * kvStackLen;
                 uint32_t kvSEndIdx = kvSStartIdx + desc.stackSeqTile;
                 if constexpr (MASK_TYPE == FaiKenel::MaskType::MASK_CAUSAL) {
                     int64_t triUp = static_cast<int64_t>(noSkipKvS) - static_cast<int64_t>(qSBlockSize);
@@ -896,9 +914,9 @@ class FAInferKernel {
                         } else if (triUp + 1U == kvSeqlenOld) {
                             lastNoMaskTile = kvStartOld - 1U;
                         } else if (triUp + 1U < kvSeqlenOld) {
-                            lastNoMaskTile = (triUp + 1U) / MAX_KV_STACK_LEN - 1U;
+                            lastNoMaskTile = (triUp + 1U) / kvStackLen - 1U;
                         } else {
-                            lastNoMaskTile = kvStartOld + (triUp + 1U - kvSeqlenOld) / MAX_KV_STACK_LEN - 1U;
+                            lastNoMaskTile = kvStartOld + (triUp + 1U - kvSeqlenOld) / kvStackLen - 1U;
                         }
                         int32_t lastNoMaskStackId;
                         if (flashDecodeFlag != 0U) {
@@ -945,11 +963,9 @@ class FAInferKernel {
                         bool isLastNoMaskStackTile =
                             (windowSizeRightStartLen >= kvSeqlen) || (windowSizeRightStartLen < 0);
                         uint32_t kvSeqlenLimit = isLastNoMaskStackTile ? kvSeqlen : windowSizeRightStartLen;
-                        uint32_t alignedKvSeqlenLimit = isLastNoMaskStackTile
-                                                            ? RoundUp(kvSeqlenLimit, MAX_KV_STACK_LEN)
-                                                            : RoundDown(kvSeqlenLimit, MAX_KV_STACK_LEN);
-                        uint32_t noMaskStackSeqNum =
-                            (alignedKvSeqlenLimit - kvStart * MAX_KV_STACK_LEN) / MAX_KV_STACK_LEN;
+                        uint32_t alignedKvSeqlenLimit = isLastNoMaskStackTile ? RoundUp(kvSeqlenLimit, kvStackLen)
+                                                                              : RoundDown(kvSeqlenLimit, kvStackLen);
+                        uint32_t noMaskStackSeqNum = (alignedKvSeqlenLimit - kvStart * kvStackLen) / kvStackLen;
                         epilogueOnlineSoftmax(gP[gmOffsetP], gS[gmOffsetS], layOutP, layOutS, actualBlockShapeQK,
                                               desc.firstStack, (stackSeqCount == noMaskStackSeqNum - 1), qSBlockSize,
                                               qNBlockSize, curStackTileMod, desc.taskStateSlot, qkReady,
@@ -1064,6 +1080,7 @@ class FAInferKernel {
     uint32_t maxQSeqlen;
     uint32_t maxKvSeqlen;
     uint32_t flashDecodeFlag;
+    uint32_t kvStackLen = MAX_KV_STACK_LEN;
     // Append-KV: per-batch new length (0 = disabled) and cache capacity.
     uint32_t kvNewSeqlen;
     uint32_t kvCacheSeqlen;
