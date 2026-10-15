@@ -32,7 +32,7 @@ export FLASH_ATTN_SKIP_SUBMODULE_INIT=1
 # 遮蔽 site-packages 里的安装包导致找不到 .so。
 export FLASH_ATTN_FORCE_BUILD=TRUE
 export ASCEND_TOOLKIT_HOME="${ASCEND_TOOLKIT_HOME:-/usr/local/Ascend/ascend-toolkit/latest}"
-log "python setup.py build_ext --inplace (FLASH_ATTN_BUILD_VERSION=${FLASH_ATTN_BUILD_VERSION:-all})"
+log "python setup.py build_ext --inplace (FLASH_ATTN_BUILD_VERSION=${FLASH_ATTN_BUILD_VERSION:-all}, FLASH_ATTN_BUILD_NPU=${FLASH_ATTN_BUILD_NPU:-auto})"
 python3 setup.py build_ext --inplace
 
 log "build phase done (artifacts in build/)"

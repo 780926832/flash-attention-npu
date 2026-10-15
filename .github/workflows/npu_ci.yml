@@ -2,10 +2,11 @@ name: NPU CI
 
 # 手动 NPU CI。PR 新建/push 不会自动跑, 可通过以下 GitHub 入口触发:
 #   1. Actions 页面 Run workflow (workflow_dispatch, 可选 workers)
-#   2. PR 评论 /run-npu-ci [workers=<n>] [arch=910|950|both]
-#      例如: /run-npu-ci workers=2 arch=910
+#   2. PR 评论 /run-npu-ci [workers=<n>] [arch=910|950|both] [build_npu=auto|all]
+#      例如: /run-npu-ci workers=2 arch=910 build_npu=all
 #      不带 workers= 则默认 2
 #      不带 arch= 则默认 both (950 和 910B 都跑)
+#      不带 build_npu= 则按本机 NPU 只编译对应后端
 # GitHub 上所有触发均强制执行 full；原 quick 用户也可触发。
 #
 # 状态检查名: NPU CI / 手动验证
@@ -40,6 +41,14 @@ on:
           - both
           - 910
           - 950
+      build_npu:
+        description: "编译目标 (auto 按本机 NPU 编译, all 同时编译 910 和 950)"
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - all
       ops:
         description: "可选, 逗号分隔的算子列表 (本仓暂未实现按算子过滤, 留空即可)"
         required: false
@@ -76,6 +85,7 @@ jobs:
       ci_mode: ${{ steps.resolve.outputs.ci_mode }}
       workers: ${{ steps.resolve.outputs.workers }}
       arch: ${{ steps.resolve.outputs.arch }}
+      build_npu: ${{ steps.resolve.outputs.build_npu }}
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
       - name: Resolve PR / commit / mode
@@ -109,12 +119,22 @@ jobs:
           if [ "$EVENT_NAME" = "issue_comment" ]; then
             workers="$(echo "$COMMENT_BODY" | grep -oE 'workers=[0-9]+' | head -1 | cut -d= -f2- || true)"
             arch="$(echo "$COMMENT_BODY" | grep -oE 'arch=(910|950|both)' | head -1 | cut -d= -f2- || true)"
+            build_npu=auto
+            if [[ " $COMMENT_BODY " =~ [[:space:]]build_npu=([^[:space:]]+)[[:space:]] ]]; then
+              build_npu="${BASH_REMATCH[1]}"
+            fi
           else
             workers="${{ github.event.inputs.workers }}"
             arch="${{ github.event.inputs.arch }}"
+            build_npu="${{ github.event.inputs.build_npu }}"
           fi
+          case "${build_npu:-auto}" in
+            auto|all) ;;
+            *) echo "invalid build_npu=$build_npu (choose auto or all)" >&2; exit 1 ;;
+          esac
           echo "workers=${workers:-2}" >> "$GITHUB_OUTPUT"
           echo "arch=${arch:-both}" >> "$GITHUB_OUTPUT"
+          echo "build_npu=${build_npu:-auto}" >> "$GITHUB_OUTPUT"
 
           # 拿 PR head sha 和 base 分支
           sha="$(gh api "repos/$repo/pulls/$pr_number" --jq '.head.sha')"
@@ -153,7 +173,7 @@ jobs:
           existing="$(gh api "repos/$repo/commits/$sha/status" \
             --jq '.statuses[] | select(.context == "NPU CI / 手动验证") | .state' || true)"
           echo "existing status: ${existing:-<none>}"
-          if [ "$existing" = "success" ]; then
+          if [ "$existing" = "success" ] && [ "${{ steps.resolve.outputs.build_npu }}" != "all" ]; then
             echo "already passed, skip" >&2
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
@@ -172,6 +192,7 @@ jobs:
           sha="${{ steps.resolve.outputs.sha }}"
           pr_number="${{ steps.resolve.outputs.pr_number }}"
           ci_mode="${{ steps.resolve.outputs.ci_mode }}"
+          build_npu="${{ steps.resolve.outputs.build_npu }}"
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           if [ "${{ github.event_name }}" = "issue_comment" ]; then
             actor="$COMMENT_USER"
@@ -194,6 +215,7 @@ jobs:
           $marker
           - 触发人: @$actor
           - 模式: \`$ci_mode\` (含 Example ST)
+          - 编译目标: \`$build_npu\`
           - PR: #$pr_number  commit: \`${sha:0:8}\`
           - 状态: 已开始
           - Actions: [$run_url]($run_url)"
@@ -229,6 +251,7 @@ jobs:
       CI_MODE: ${{ needs.prepare.outputs.ci_mode }}
       CI_RUN_EXAMPLE_ST: "true"
       CI_TEST_WORKERS: ${{ needs.prepare.outputs.workers }}
+      FLASH_ATTN_BUILD_NPU: ${{ needs.prepare.outputs.build_npu }}
       CI_DOCKER_IMAGE: ${{ matrix.docker_image }}
       CI_REQUIRE_HEALTHY_NPU: ${{ matrix.require_healthy }}
       CI_NPU_MAX_TASKS: ${{ matrix.max_tasks }}

@@ -17,6 +17,7 @@
 #   CI_DOCKER_IMAGE          (默认 fa-npu-ci:910b-cann9.1-torch2.9)
 #   CI_SKIP_BUILD            (默认 false)  true=跳过阶段1 (已有 build/ 产物)
 #   CI_CONTAINER_SCOPE       当前 CI job 的唯一容器归属标识
+#   FLASH_ATTN_BUILD_NPU     (默认 auto) 按 torch_npu 设备名选择 910/950; all=双架构
 #   CI_NPU_WAIT_MAX_SEC      (默认 600)    所有卡忙时最长等待秒数
 #   CI_NPU_WAIT_INTERVAL_SEC (默认 30)     所有卡忙时重探间隔秒数
 #   ASCEND_RT_VISIBLE_DEVICES               手动指定宿主机物理卡时跳过自动选卡
@@ -50,6 +51,7 @@ GOLDEN_CACHE_DIR="${GOLDEN_CACHE_DIR:-/var/cache/flash-attention-npu/golden_cach
 GOLDEN_CACHE_MODE="${GOLDEN_CACHE_MODE:-cache}"
 
 # shellcheck source=ci/docker_proxy.sh
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/docker_proxy.sh"
 git_proxy_init "$GOLDEN_CACHE_HOST_DIR"
 
@@ -101,6 +103,10 @@ run_build_phase() {
   local rc
   local cache_dir="${SUBMODULE_CACHE_DIR:-${GOLDEN_CACHE_HOST_DIR}/submodule-cache}"
   local cache_parent cache_mount_args=()
+  local mount_args=()
+  while IFS= read -r m; do
+    [ -n "$m" ] && mount_args+=("$m")
+  done < <(docker_mount_args)
   cache_parent="$(dirname -- "$cache_dir")"
   log "=== Phase 1: build (no NPU lock) ==="
   # 宿主机优先只读恢复缓存; 写不了数据盘时只负责浅拉工作区。
@@ -124,7 +130,9 @@ run_build_phase() {
     --ipc host \
     -v "$REPO_ROOT:/workspace/flash-attention-npu" \
     "${cache_mount_args[@]}" \
+    "${mount_args[@]}" \
     -e FLASH_ATTN_BUILD_VERSION="${FLASH_ATTN_BUILD_VERSION:-all}" \
+    -e FLASH_ATTN_BUILD_NPU="${FLASH_ATTN_BUILD_NPU:-auto}" \
     -e FLASH_ATTN_SKIP_SUBMODULE_INIT=1 \
     -e GIT_CONFIG_GLOBAL=/tmp/gitconfig \
     -w /workspace/flash-attention-npu \
@@ -200,6 +208,7 @@ run_docker_test() {
     -e GOLDEN_CACHE_MAX_DIRS="${GOLDEN_CACHE_MAX_DIRS:-5}" \
     -e GOLDEN_CACHE_MAX_TEST_DIRS="${GOLDEN_CACHE_MAX_TEST_DIRS:-32}" \
     -e FLASH_ATTN_BUILD_VERSION="${FLASH_ATTN_BUILD_VERSION:-all}" \
+    -e FLASH_ATTN_BUILD_NPU="${FLASH_ATTN_BUILD_NPU:-auto}" \
     -e GIT_CONFIG_GLOBAL=/tmp/gitconfig \
     -w /workspace/flash-attention-npu \
     "$CI_DOCKER_IMAGE" \
