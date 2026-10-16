@@ -21,6 +21,7 @@
 #   CI_DOCKER_PRIVILEGED  (默认 true)
 #   CI_CONTAINER_SCOPE   （默认 -local-$(id -u)-$$）当前 CI job 的唯一容器归属标识
 #   FLASH_ATTN_BUILD_VERSION (默认 all) 编译哪些 API 代 (all/v2/v3/v4)
+#   FLASH_ATTN_BUILD_NPU     (默认按 combo 架构) 可设 all 编译双架构
 #   PROXY_CONFIG_FILE (默认 /home/FA_NPU_CI_DATA/proxy.conf)
 #   CI_GIT_PROXY / CI_GIT_PROXY_WHITELIST (可选, 覆盖 git 代理和白名单)
 #   SUBMODULE_CACHE_DIR   (默认 $GOLDEN_CACHE_HOST_DIR/submodule-cache)
@@ -42,6 +43,7 @@ PID_DIR="$LOG_DIR/pids"
 ARCH_FILTER="${ARCH_FILTER:-}"
 
 # shellcheck source=ci/docker_proxy.sh
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/docker_proxy.sh"
 git_proxy_init "${GOLDEN_CACHE_HOST_DIR:-/home/FA_NPU_CI_DATA}"
 
@@ -131,9 +133,16 @@ bash "$SCRIPT_DIR/init_submodules.sh" "$REPO_ROOT"
 
 # ---------- 2. 每个 combo 一个容器, 并发编译 ----------
 build_one() {
-  local line="$1" name logf rc img docker_pid pidfile
+  local line="$1" name logf rc img docker_pid pidfile arch build_npu
   name="${line%%|*}"
   img="$(combo_image "$line")"
+  arch="$(printf '%s' "$line" | awk -F'|' '{print $7}')"
+  case "$arch" in
+    aarch64) build_npu=910 ;;
+    x86_64) build_npu=950 ;;
+    *) die "unknown matrix arch: $arch ($name)" ;;
+  esac
+  build_npu="${FLASH_ATTN_BUILD_NPU:-$build_npu}"
   logf="$LOG_DIR/${name}.log"
   pidfile="$PID_DIR/${name}.pid"
   : > "$logf"
@@ -149,6 +158,7 @@ build_one() {
     -e FLASH_ATTN_FORCE_BUILD=TRUE \
     -e FLASH_ATTN_SKIP_SUBMODULE_INIT=1 \
     -e FLASH_ATTN_BUILD_VERSION="${FLASH_ATTN_BUILD_VERSION:-all}" \
+    -e FLASH_ATTN_BUILD_NPU="$build_npu" \
     -w /workspace/flash-attention-npu \
     "$img" \
     bash -lc 'git config --global --add safe.directory "*" && python3 setup.py build --build-base=/tmp/build' \

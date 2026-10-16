@@ -40,6 +40,14 @@ on:
         required: false
         type: string
         default: "2"
+      build_npu:
+        description: "编译目标 (auto 按本机 NPU 编译, all 同时编译 910 和 950)"
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - all
       ref:
         description: "git ref (分支名/tag/commit, 默认 main)"
         required: false
@@ -75,6 +83,7 @@ jobs:
         format('tests/{0}', github.event.inputs.test_file) }}
       CI_TEST_DIRECT_FILTER: ${{ github.event.inputs.test_filter }}
       CI_TEST_WORKERS: ${{ github.event.inputs.workers }}
+      FLASH_ATTN_BUILD_NPU: ${{ github.event.inputs.build_npu }}
       CI_MODE: full
       CI_REF: ${{ github.event.inputs.ref }}
       CI_CONTAINER_SCOPE: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-${{ matrix.arch_label }}

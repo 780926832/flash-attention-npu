@@ -53,17 +53,47 @@ SKIP_NPU_BUILD = os.getenv("FLASH_ATTENTION_SKIP_NPU_BUILD", "FALSE") == "TRUE"
 #          so a single wheel runs on both 910 and 950.
 #   "all"  build v2 + v3 + the v4 backends selected by FLASH_ATTN_BUILD_NPU.
 # FLASH_ATTN_BUILD_NPU selects which NPU hardware backends to build:
+#   "auto" detect the local device using torch_npu (default)
 #   "910"  only Ascend 910B/C backends (flash_attn_npu.flash_attn_npu,
 #          flash_attn_npu_3.flash_attn_npu_3, flash_attn_npu_4.flash_attn_npu_4)
 #   "950"  only the Ascend 950 backends (flash_attn_npu_3_950,
 #          flash_attn_npu_4_950)
-#   "all"  build every backend whose API generation is selected above
-#          (default). Runtime dispatch in flash_attn_npu_3/__init__.py and
+#   "all"  build every backend whose API generation is selected above.
+#          Runtime dispatch in flash_attn_npu_3/__init__.py and
 #          flash_attn_npu_4/__init__.py picks the matching backend per host
 #          via torch_npu.npu.get_device_name(), so an "all" wheel runs on
 #          both 910 and 950.
 BUILD_VERSION = os.getenv("FLASH_ATTN_BUILD_VERSION", "all").lower()
-BUILD_NPU = os.getenv("FLASH_ATTN_BUILD_NPU", "all").lower()
+
+
+def get_build_npu():
+    target = os.getenv("FLASH_ATTN_BUILD_NPU", "auto").lower()
+    if target in ("910", "950", "all"):
+        return target
+    if target != "auto":
+        raise RuntimeError(
+            f"Invalid FLASH_ATTN_BUILD_NPU={target!r}; choose auto, 910, 950, or all."
+        )
+    if SKIP_NPU_BUILD:
+        return "auto"
+    try:
+        device_name = torch_npu.npu.get_device_name()
+    except Exception as error:
+        raise RuntimeError(
+            "Cannot detect the NPU for this build. Set FLASH_ATTN_BUILD_NPU "
+            "to 910, 950, or all when building without a visible device."
+        ) from error
+    if "Ascend950" in device_name:
+        return "950"
+    if "Ascend910" in device_name:
+        return "910"
+    raise RuntimeError(
+        f"Unsupported NPU device {device_name!r}; set FLASH_ATTN_BUILD_NPU "
+        "to 910, 950, or all explicitly."
+    )
+
+
+BUILD_NPU = get_build_npu()
 # FLASH_ATTN_ENABLE_MSSANITIZER: 使能 Ascend msSanitizer 内存异常检测。
 # 开启后：
 #  - 910 (dav-2201)：编译追加 "-g --cce-enable-sanitizer"，链接追加 "--cce-enable-sanitizer"（静态插桩）；
@@ -354,15 +384,11 @@ class BishengBuildExt(build_ext):
             "flash_attn_npu_3.flash_attn_npu_3": os.path.join(
                 this_dir, "csrc/ascend910", "flash_attn_npu_3"
             ),
-            "flash_attn_npu_3_950": os.path.join(
-                this_dir, "csrc/ascend950", "flash_attn_npu_3"
-            ),
+            "flash_attn_npu_3_950": os.path.join(this_dir, "csrc/ascend950", "flash_attn_npu_3"),
             "flash_attn_npu_4.flash_attn_npu_4": os.path.join(
                 this_dir, "csrc/ascend910", "flash_attn_npu_4"
             ),
-            "flash_attn_npu_4_950": os.path.join(
-                this_dir, "csrc/ascend950", "flash_attn_npu_4"
-            ),
+            "flash_attn_npu_4_950": os.path.join(this_dir, "csrc/ascend950", "flash_attn_npu_4"),
         }
         src_dir = aicpu_src_dirs.get(ext_name)
         if src_dir is None:
