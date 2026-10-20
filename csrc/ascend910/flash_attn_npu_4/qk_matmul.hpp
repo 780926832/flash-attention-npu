@@ -19,28 +19,11 @@
 
 namespace Catlass::Gemm::Block {
 
-template <
-    bool PAGED_CACHE_FLAG_,
-    bool ENABLE_UNIT_FLAG_,
-    class L1TileShape_,
-    class L0TileShape_,
-    class AType_,
-    class BType_,
-    class CType_,
-    class BiasType_,
-    class TileCopy_,
-    class TileMmad_>
-struct BlockMmad<
-    MmadAtlasA2FAIQKT<PAGED_CACHE_FLAG_, ENABLE_UNIT_FLAG_>,
-    L1TileShape_,
-    L0TileShape_,
-    AType_,
-    BType_,
-    CType_,
-    BiasType_,
-    TileCopy_,
-    TileMmad_> {
-public:
+template <bool PAGED_CACHE_FLAG_, bool ENABLE_UNIT_FLAG_, class L1TileShape_, class L0TileShape_, class AType_,
+          class BType_, class CType_, class BiasType_, class TileCopy_, class TileMmad_>
+struct BlockMmad<MmadAtlasA2FAIQKT<PAGED_CACHE_FLAG_, ENABLE_UNIT_FLAG_>, L1TileShape_, L0TileShape_, AType_, BType_,
+                 CType_, BiasType_, TileCopy_, TileMmad_> {
+  public:
     // Type Aliases
     using DispatchPolicy = MmadAtlasA2FAIQKT<PAGED_CACHE_FLAG_, ENABLE_UNIT_FLAG_>;
     using ArchTag = typename DispatchPolicy::ArchTag;
@@ -89,22 +72,22 @@ public:
 
     static_assert(std::is_same_v<LayoutC, layout::RowMajor>, "LayoutC only support RowMajor yet!");
 
-    __aicore__ inline
-    BlockMmad() {}
+    __aicore__ inline BlockMmad() {}
 
-    __aicore__ inline
-    ~BlockMmad() {}
+    __aicore__ inline ~BlockMmad() {}
 
-    __aicore__ inline
-    void init(Arch::Resource<ArchTag> &resource, uint32_t nDyn, uint32_t kDyn,
-              uint32_t KVStackLen = 512, uint32_t l1BufAddrStart = 0)
+    __aicore__ inline void init(Arch::Resource<ArchTag>& resource, uint32_t nDyn, uint32_t kDyn,
+                                uint32_t KVStackLen = 512, uint32_t l1BufAddrStart = 0, uint32_t qDyn = 0)
     {
         maxKVStackLen = KVStackLen;
+        // Q is resident for the whole task; qDyn defaults to the KV tile width
+        // so the <=256 layout is unchanged.
+        const uint32_t qTileWidth = (qDyn == 0U) ? kDyn : qDyn;
         // Allocate L1 memory space
         l1ATensor = resource.l1Buf.template GetBufferByByte<ElementA>(l1BufAddrStart);
         for (uint32_t i = 0; i < STAGES; i++) {
-            l1BTensor[i] = resource.l1Buf.template GetBufferByByte<ElementB>(l1BufAddrStart +
-                L1TileShape::M * kDyn * sizeof(ElementA) + nDyn * kDyn * sizeof(ElementB) * i);
+            l1BTensor[i] = resource.l1Buf.template GetBufferByByte<ElementB>(
+                l1BufAddrStart + L1TileShape::M * qTileWidth * sizeof(ElementA) + nDyn * kDyn * sizeof(ElementB) * i);
             l0ATensor[i] = resource.l0ABuf.template GetBufferByByte<ElementA>(L0A_PINGPONG_BUF_SIZE * i);
             l0BTensor[i] = resource.l0BBuf.template GetBufferByByte<ElementB>(L0B_PINGPONG_BUF_SIZE * i);
             l0CTensor[i] = resource.l0CBuf.template GetBufferByByte<ElementAccumulator>(L0C_PINGPONG_BUF_SIZE * i);
@@ -113,32 +96,26 @@ public:
         l1KDynamic = kDyn;
     }
 
-    __aicore__ inline
-    void loadQGM(
-        AscendC::GlobalTensor<ElementA> gA,
-        LayoutA layoutA,
-        uint32_t rowNum, uint32_t &singleGroupHeads, uint32_t &qHeads)
+    __aicore__ inline void loadQGM(AscendC::GlobalTensor<ElementA> gA, LayoutA layoutA, uint32_t rowNum,
+                                   uint32_t& singleGroupHeads, uint32_t& qHeads)
     {
         uint32_t embed = layoutA.shape(1);
         uint32_t rowNumRound = RoundUp(rowNum, L1AAlignHelper::M_ALIGNED);
         uint32_t tokenNumPerGroup = rowNum / singleGroupHeads;
         auto layoutSingleANd = layoutA.GetTileLayout(MakeCoord(singleGroupHeads, embed));
         LayoutAInL1 layoutAInL1 = LayoutAInL1::template MakeLayout<ElementA>(rowNum, embed);
-        copyGmToL1A(
-            l1ATensor, gA,
-            layoutAInL1, layoutSingleANd,
-            tokenNumPerGroup, qHeads * embed, tokenNumPerGroup, BLOCK_SIZE, rowNumRound);
+        copyGmToL1A(l1ATensor, gA, layoutAInL1, layoutSingleANd, tokenNumPerGroup, qHeads * embed, tokenNumPerGroup,
+                    BLOCK_SIZE, rowNumRound);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID3);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID3);
     }
 
-    __aicore__ inline
-    void setBlockParam(uint32_t stackSeqTile, uint32_t &blockStart, uint32_t &blockEnd, uint32_t &curBlockTotalNum,
-        uint32_t blockSize)
+    __aicore__ inline void setBlockParam(uint32_t stackSeqTile, uint32_t& blockStart, uint32_t& blockEnd,
+                                         uint32_t& curBlockTotalNum, uint32_t blockSize)
     {
-        if(stackSeqTile >= blockStart && blockSize != 0) {
-            blockEnd = ((stackSeqTile - blockStart) % blockSize == 0) ?
-                blockSize : (stackSeqTile - blockStart) % blockSize;
+        if (stackSeqTile >= blockStart && blockSize != 0) {
+            blockEnd =
+                ((stackSeqTile - blockStart) % blockSize == 0) ? blockSize : (stackSeqTile - blockStart) % blockSize;
             curBlockTotalNum = (((stackSeqTile - blockStart) + blockSize - 1) / blockSize) + 1;
         } else {
             curBlockTotalNum = 1;
@@ -146,9 +123,9 @@ public:
             blockEnd = stackSeqTile + blockStartOffset;
         }
     }
-    
-    __aicore__ inline
-    void getBlockShape(GemmCoord &actualShape, uint32_t nL1Idx, uint32_t nL1Loop, uint32_t stackSeqTile)
+
+    __aicore__ inline void getBlockShape(GemmCoord& actualShape, uint32_t nL1Idx, uint32_t nL1Loop,
+                                         uint32_t stackSeqTile)
     {
         uint32_t nSplitSize = l1NDynamic;
         if (nL1Idx == nL1Loop - 1U) {
@@ -157,58 +134,56 @@ public:
         actualShape[COORD_DIM1] = nSplitSize;
     }
 
-    __aicore__ inline
-    void getBlockShape(GemmCoord &actualShape, uint32_t& blockStartOffset, uint32_t& l1NResDynamic, uint32_t& kvL1Len,
-        uint32_t& nowLen, uint32_t& blockSize)
+    __aicore__ inline void getBlockShape(GemmCoord& actualShape, uint32_t& blockStartOffset, uint32_t& l1NResDynamic,
+                                         uint32_t& kvL1Len, uint32_t& nowLen, uint32_t& blockSize)
     {
-        nowLen = (blockSize - blockStartOffset < l1NResDynamic - kvL1Len) ?
-                blockSize - blockStartOffset :
-                l1NResDynamic - kvL1Len;
+        nowLen = (blockSize - blockStartOffset < l1NResDynamic - kvL1Len) ? blockSize - blockStartOffset
+                                                                          : l1NResDynamic - kvL1Len;
         actualShape[COORD_DIM1] = nowLen;
     }
 
-    __aicore__ inline
-    void getKVOffset(uint32_t &kOffset, uint32_t nIdx, uint32_t nowNIdx, uint32_t strideKV)
+    __aicore__ inline void getKVOffset(uint32_t& kOffset, uint32_t nIdx, uint32_t nowNIdx, uint32_t strideKV)
     {
         kOffset = nIdx * maxKVStackLen * strideKV + nowNIdx * l1NDynamic * strideKV;
     }
 
-    __aicore__ inline
-    void getKVOffset(AscendC::GlobalTensor<int32_t> &gBlockTable, uint32_t &kOffset, uint32_t nowNIdx, 
-        uint32_t startOffset, uint32_t strideKV, uint32_t blockSize)
+    __aicore__ inline void getKVOffset(AscendC::GlobalTensor<int32_t>& gBlockTable, uint32_t& kOffset, uint32_t nowNIdx,
+                                       uint32_t startOffset, uint32_t strideKV, uint32_t blockSize)
     {
         uint32_t blockTableId = gBlockTable.GetValue(nowNIdx);
         kOffset = blockTableId * blockSize * strideKV + startOffset * strideKV;
     }
 
-    __aicore__ inline
-    void resetBlockStart(uint32_t kvStart, uint32_t pagedBlockSize)
+    __aicore__ inline void resetBlockStart(uint32_t kvStart, uint32_t pagedBlockSize)
     {
         blockStartOffset = kvStart * maxKVStackLen % pagedBlockSize;
     }
 
-    __aicore__ inline
-    void updateBlockOffset(uint32_t nowLen, uint32_t &curBlockIdx, uint32_t blockSize)
+    __aicore__ inline void updateBlockOffset(uint32_t nowLen, uint32_t& curBlockIdx, uint32_t blockSize)
     {
-        if(blockStartOffset + nowLen == blockSize){
+        if (blockStartOffset + nowLen == blockSize) {
             blockStartOffset = 0;
             curBlockIdx++;
-        } else{
+        } else {
             blockStartOffset += nowLen;
         }
     }
 
-    __aicore__ inline
-    void operator()(AscendC::GlobalTensor<ElementA> gA,
-                    AscendC::GlobalTensor<ElementB> gB,
-                    AscendC::GlobalTensor<ElementC> gC,
-                    AscendC::GlobalTensor<int32_t> gBlockTable,
-                    LayoutA layoutA, LayoutB layoutB, LayoutC layoutC, GemmCoord actualOriShape,
-                    uint32_t nIdx, uint32_t nLoop, uint32_t blockSize, uint32_t strideKV)
+    __aicore__ inline void operator()(AscendC::GlobalTensor<ElementA> gA, AscendC::GlobalTensor<ElementB> gB,
+                                      AscendC::GlobalTensor<ElementC> gC, AscendC::GlobalTensor<int32_t> gBlockTable,
+                                      LayoutA layoutA, LayoutB layoutB, LayoutC layoutC, GemmCoord actualOriShape,
+                                      uint32_t nIdx, uint32_t nLoop, uint32_t blockSize, uint32_t strideKV)
     {
         uint32_t rowNum = actualOriShape[COORD_DIM0];
         uint32_t stackSeqTile = actualOriShape[COORD_DIM1];
         uint32_t embed = actualOriShape[COORD_DIM2];
+
+        // D>256 streams K in l1KDynamic-wide head-dim slices.
+        if (embed > EMBED_SPLIT_SIZE * 2U) {
+            headDimSplitQK(gA, gB, gC, gBlockTable, layoutA, layoutB, layoutC, actualOriShape, nIdx, blockSize,
+                           strideKV);
+            return;
+        }
 
         GemmCoord actualShape{rowNum, 0, embed};
         uint32_t gBOffset = 0;
@@ -217,7 +192,7 @@ public:
 
         uint32_t tileNNumPerBaseBlock = blockSize / l1NDynamic;
         uint32_t nL1Loop = CeilDiv(stackSeqTile, l1NDynamic);
-        uint32_t curBlockIdx =  0;
+        uint32_t curBlockIdx = 0;
         uint32_t blockStart = 0;
         uint32_t blockEnd = 0;
         uint32_t curBlockTotalNum = 0;
@@ -231,13 +206,13 @@ public:
             uint32_t nActual = actualShape.n();
             LayoutBInL1 layoutBInL1 = LayoutBInL1::template MakeLayout<ElementB>(kActual, nActual);
             if constexpr (PAGED_CACHE_FLAG_) {
-                uint32_t l1NResDynamic = (nL1Idx < (nL1Loop-1)) ? l1NDynamic : (stackSeqTile - nL1Idx * l1NDynamic);
+                uint32_t l1NResDynamic = (nL1Idx < (nL1Loop - 1)) ? l1NDynamic : (stackSeqTile - nL1Idx * l1NDynamic);
                 layoutBInL1 = LayoutBInL1::template MakeLayout<ElementB>(embed, l1NResDynamic);
                 uint32_t kvL1Len = 0;
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1KvPingPongFlag);
-                while(kvL1Len < l1NResDynamic){
+                while (kvL1Len < l1NResDynamic) {
                     uint32_t nowLen = 0;
-                    uint32_t curBlockSize = (curBlockIdx < (curBlockTotalNum-1)) ? blockSize : blockEnd;
+                    uint32_t curBlockSize = (curBlockIdx < (curBlockTotalNum - 1)) ? blockSize : blockEnd;
                     uint32_t nowNIdx = nIdx * maxKVStackLen / blockSize + curBlockIdx;
                     getBlockShape(actualShape, blockStartOffset, l1NResDynamic, kvL1Len, nowLen, curBlockSize);
                     getKVOffset(gBlockTable, gBOffset, nowNIdx, blockStartOffset, strideKV, blockSize);
@@ -296,13 +271,8 @@ public:
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_ID0);
                     bool initMmad = (kL0Idx == 0U);
                     uint32_t mL0Align = (mL0Actual + BLOCK_SIZE - 1U) / BLOCK_SIZE * BLOCK_SIZE;
-                    tileMmad(l0CTensor[l0CPingPongFlag],
-                        l0ATensor[l0ABPingPongFlag],
-                        l0BTensor[l0ABPingPongFlag],
-                        mL0Align,
-                        nActual,
-                        kL0Actual,
-                        initMmad);
+                    tileMmad(l0CTensor[l0CPingPongFlag], l0ATensor[l0ABPingPongFlag], l0BTensor[l0ABPingPongFlag],
+                             mL0Align, nActual, kL0Actual, initMmad);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag);
                     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag + 2U);
                     l0ABPingPongFlag = 1U - l0ABPingPongFlag;
@@ -319,7 +289,120 @@ public:
             l1KvPingPongFlag = 1U - l1KvPingPongFlag;
         }
     }
-protected:
+
+    // Stage one head-dim slice of K into the shared K/P slot (D>256 path).
+    __aicore__ inline void copyKHeadDimSliceToL1(AscendC::GlobalTensor<ElementB> gB,
+                                                 AscendC::GlobalTensor<int32_t> gBlockTable, LayoutB layoutB,
+                                                 uint32_t rowBase, uint32_t blockSize, uint32_t strideKV,
+                                                 uint32_t dSlice, uint32_t kActual, uint32_t nActual, uint32_t stage)
+    {
+        LayoutBInL1 layoutBInL1 = LayoutBInL1::template MakeLayout<ElementB>(kActual, nActual);
+        if constexpr (PAGED_CACHE_FLAG_) {
+            uint32_t pageIdx = rowBase / blockSize;
+            uint32_t pageOff = rowBase % blockSize;
+            uint32_t dstRow = 0U;
+            while (dstRow < nActual) {
+                const uint32_t segLen = AscendC::Std::min(nActual - dstRow, blockSize - pageOff);
+                const uint32_t blockTableId = gBlockTable.GetValue(pageIdx);
+                const uint32_t gOffset = blockTableId * blockSize * strideKV + pageOff * strideKV + dSlice * l1KDynamic;
+                auto layoutBTile = layoutB.GetTileLayout(MakeCoord(kActual, segLen));
+                MatrixCoord l1BTileCoord{0, dstRow};
+                auto l1BTile = l1BTensor[stage][layoutBInL1.GetOffset(l1BTileCoord)];
+                copyGmToL1B(l1BTile, gB[gOffset], layoutBInL1, layoutBTile);
+                dstRow += segLen;
+                ++pageIdx;
+                pageOff = 0U;
+            }
+        } else {
+            const uint32_t gOffset = rowBase * strideKV + dSlice * l1KDynamic;
+            auto layoutBTile = layoutB.GetTileLayout(MakeCoord(kActual, nActual));
+            copyGmToL1B(l1BTensor[stage], gB[gOffset], layoutBInL1, layoutBTile);
+        }
+    }
+
+    __aicore__ inline __attribute__((noinline)) void
+    headDimSplitQK(AscendC::GlobalTensor<ElementA> gA, AscendC::GlobalTensor<ElementB> gB,
+                   AscendC::GlobalTensor<ElementC> gC, AscendC::GlobalTensor<int32_t> gBlockTable, LayoutA layoutA,
+                   LayoutB layoutB, LayoutC layoutC, GemmCoord actualOriShape, uint32_t nIdx, uint32_t blockSize,
+                   uint32_t strideKV)
+    {
+        const uint32_t rowNum = actualOriShape[COORD_DIM0];
+        const uint32_t stackSeqTile = actualOriShape[COORD_DIM1];
+        const uint32_t embed = actualOriShape[COORD_DIM2];
+        const uint32_t dSliceNum = CeilDiv(embed, l1KDynamic);
+        const uint32_t nL1Loop = CeilDiv(stackSeqTile, l1NDynamic);
+        const uint32_t mL0Loop = CeilDiv(rowNum, L0TileShape::M);
+        const LayoutAInL1 layoutAInL1 = LayoutAInL1::template MakeLayout<ElementA>(rowNum, embed);
+
+        // Same slot cadence as the <=256 path, using the local counters.
+        for (uint32_t nL1Idx = 0; nL1Idx < nL1Loop; ++nL1Idx) {
+            const uint32_t nActual = (nL1Idx < nL1Loop - 1U) ? l1NDynamic : (stackSeqTile - nL1Idx * l1NDynamic);
+            const uint32_t rowBase = nIdx * maxKVStackLen + nL1Idx * l1NDynamic;
+
+            for (uint32_t mL0Idx = 0; mL0Idx < mL0Loop; ++mL0Idx) {
+                const uint32_t mL0Actual =
+                    (mL0Idx < mL0Loop - 1U) ? L0TileShape::M : (rowNum - mL0Idx * L0TileShape::M);
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CPingPongFlag);
+
+                for (uint32_t dSlice = 0; dSlice < dSliceNum; ++dSlice) {
+                    const uint32_t kActual = (dSlice < dSliceNum - 1U) ? l1KDynamic : (embed - dSlice * l1KDynamic);
+                    const uint32_t kL0Loop = CeilDiv(kActual, L0TileShape::K);
+
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1KvPingPongFlag);
+                    copyKHeadDimSliceToL1(gB, gBlockTable, layoutB, rowBase, blockSize, strideKV, dSlice, kActual,
+                                          nActual, l1KvPingPongFlag);
+                    AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1KvPingPongFlag);
+
+                    for (uint32_t kL0Idx = 0; kL0Idx < kL0Loop; ++kL0Idx) {
+                        const uint32_t kL0Actual =
+                            (kL0Idx < kL0Loop - 1U) ? L0TileShape::K : (kActual - kL0Idx * L0TileShape::K);
+                        const uint32_t kGlobalOffset = dSlice * l1KDynamic + kL0Idx * L0TileShape::K;
+
+                        LayoutAInL0 layoutAInL0 = LayoutAInL0::template MakeLayout<ElementA>(mL0Actual, kL0Actual);
+                        MatrixCoord l1ATileCoord{mL0Idx * L0TileShape::M, kGlobalOffset};
+                        auto l1ATile = l1ATensor[layoutAInL1.GetOffset(l1ATileCoord)];
+
+                        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag);
+                        copyL1ToL0A(l0ATensor[l0ABPingPongFlag], l1ATile, layoutAInL0, layoutAInL1);
+
+                        LayoutBInL0 layoutBInL0 = LayoutBInL0::template MakeLayout<ElementB>(kL0Actual, nActual);
+                        MatrixCoord l1BTileCoord{kL0Idx * L0TileShape::K, 0};
+                        LayoutBInL1 layoutBInL1 = LayoutBInL1::template MakeLayout<ElementB>(kActual, nActual);
+                        auto l1BTile = l1BTensor[l1KvPingPongFlag][layoutBInL1.GetOffset(l1BTileCoord)];
+                        if (kL0Idx == 0U) {
+                            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1KvPingPongFlag);
+                        }
+                        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag + 2U);
+                        copyL1ToL0B(l0BTensor[l0ABPingPongFlag], l1BTile, layoutBInL0, layoutBInL1);
+                        if (kL0Idx == kL0Loop - 1U) {
+                            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1KvPingPongFlag);
+                        }
+
+                        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_ID0);
+                        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_ID0);
+                        const uint32_t mL0Align = RoundUp(mL0Actual, BLOCK_SIZE);
+                        tileMmad(l0CTensor[l0CPingPongFlag], l0ATensor[l0ABPingPongFlag], l0BTensor[l0ABPingPongFlag],
+                                 mL0Align, nActual, kL0Actual, (dSlice == 0U && kL0Idx == 0U));
+                        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag);
+                        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0ABPingPongFlag + 2U);
+                        l0ABPingPongFlag = 1U - l0ABPingPongFlag;
+                    }
+                }
+
+                AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_ID0);
+                AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_ID0);
+                MatrixCoord gmCTileCoord{mL0Idx * L0TileShape::M, nL1Idx * l1NDynamic};
+                LayoutC layoutCTile = layoutC.GetTileLayout(MakeCoord(mL0Actual, nActual));
+                auto layoutInL0C = LayoutCInL0::MakeLayoutInL0C(MakeCoord(mL0Actual, nActual));
+                copyL0CToGm(gC[layoutC.GetOffset(gmCTileCoord)], l0CTensor[l0CPingPongFlag], layoutCTile, layoutInL0C);
+                AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CPingPongFlag);
+                l0CPingPongFlag = 1U - l0CPingPongFlag;
+            }
+            l1KvPingPongFlag = 1U - l1KvPingPongFlag;
+        }
+    }
+
+  protected:
     /// Data members
     AscendC::LocalTensor<ElementA> l1ATensor;
     AscendC::LocalTensor<ElementB> l1BTensor[STAGES];
@@ -346,6 +429,6 @@ protected:
     uint32_t maxKVStackLen = 0;
 };
 
-}
+} // namespace Catlass::Gemm::Block
 
 #endif

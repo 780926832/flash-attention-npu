@@ -138,6 +138,7 @@ class FAInferKernel {
         scaleValue = fARuntimeData->scaleValue;
         softcapValue = fARuntimeData->softcapValue;
         maxQSeqlen = fATilingData->maxQSeqlen;
+        const uint32_t maxKvSeqlen = fATilingData->maxKvSeqlen;
         flashDecodeFlag = fATilingData->flashDecodeFlag;
 
         // FD workspace sizing: reserve head of workspace for gLseFD/gOFD.
@@ -217,20 +218,38 @@ class FAInferKernel {
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID6);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID7);
 
-        uint32_t kDynNum = RoundUp(embed, NUM_128);
-        kDynNum = kDynNum < NUM_256 ? NUM_256 : kDynNum;
-        uint32_t maxQKPL1Size = L1_MAX_SIZE - embedV * MAX_KV_STACK_LEN * sizeof(ElementV);
-        uint32_t maxQL1Size = Q_TILE_CEIL * kDynNum * sizeof(ElementQ);
-        uint32_t maxNDynNum =
-            ((maxQKPL1Size - maxQL1Size) / kDynNum / sizeof(ElementV) / DOUBLE_BUFFER) / NUM_32 * NUM_32;
+        // D>256: Q resident + K/P shared 2-stage (256-wide slices) + V 2-stage
+        // (128-wide slices) = 384 KB of the 512 KB L1 budget.
+        const bool headDimSplit = embed > NUM_256;
+        // 256-wide slice (dSliceNum 4 -> 2). kPVDyn follows kDyn because the
+        // K/P region is shared, and vSegLen follows the PV K chunk.
+        uint32_t kDynNum = NUM_256;
+        uint32_t nDynNum = NUM_128;
+        uint32_t qL1DynNum = RoundUp(embed, FaiKenel::BLOCK_SIZE);
+        uint32_t kPVDynNum = NUM_256;
+        uint32_t vL1Stages = DOUBLE_BUFFER;
+        uint32_t vSegLen = NUM_256;
+        uint32_t vSliceWidth = NUM_128;
+        if (!headDimSplit) {
+            // Preserve the production <=256 layout byte for byte.
+            kDynNum = RoundUp(embed, NUM_128);
+            kDynNum = kDynNum < NUM_256 ? NUM_256 : kDynNum;
+            uint32_t maxQKPL1Size = L1_MAX_SIZE - embedV * MAX_KV_STACK_LEN * sizeof(ElementV);
+            uint32_t maxQL1Size = Q_TILE_CEIL * kDynNum * sizeof(ElementQ);
+            uint32_t maxNDynNum =
+                ((maxQKPL1Size - maxQL1Size) / kDynNum / sizeof(ElementV) / DOUBLE_BUFFER) / NUM_32 * NUM_32;
+            nDynNum = maxNDynNum < L1_MAX_N_NUM ? maxNDynNum : L1_MAX_N_NUM;
+            nDynNum = L1_MAX_N_NUM % nDynNum != 0 ? RoundDown((nDynNum - 1), NUM_32) : nDynNum;
+            qL1DynNum = kDynNum;
+            kPVDynNum = nDynNum * kDynNum / BlockMmadPV::L1TileShape::M;
+            vL1Stages = 1U;
+            vSegLen = MAX_KV_STACK_LEN;
+            vSliceWidth = embedV;
+        }
 
-        uint32_t nDynNum = maxNDynNum < L1_MAX_N_NUM ? maxNDynNum : L1_MAX_N_NUM;
-        nDynNum = L1_MAX_N_NUM % nDynNum != 0 ? RoundDown((nDynNum - 1), NUM_32) : nDynNum;
-
-        uint32_t L1_QK_SIZE = BlockMmadQK::L1TileShape::M * kDynNum * sizeof(ElementQ);
-        blockMmadQK.init(resource, nDynNum, kDynNum, MAX_KV_STACK_LEN);
-        uint32_t kPVDynNum = nDynNum * kDynNum / BlockMmadPV::L1TileShape::M;
-        blockMmadPV.init(resource, nDynNum, kPVDynNum, MAX_KV_STACK_LEN, L1_QK_SIZE);
+        uint32_t L1_QK_SIZE = BlockMmadQK::L1TileShape::M * qL1DynNum * sizeof(ElementQ);
+        blockMmadQK.init(resource, nDynNum, kDynNum, MAX_KV_STACK_LEN, 0, qL1DynNum);
+        blockMmadPV.init(resource, nDynNum, kPVDynNum, MAX_KV_STACK_LEN, L1_QK_SIZE, vL1Stages, vSegLen, vSliceWidth);
 #endif
 #ifdef __DAV_C220_VEC__
         AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
@@ -251,7 +270,11 @@ class FAInferKernel {
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID2);
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3);
 
-        epilogueOnlineSoftmax.init(resource, scaleValue, softcapValue);
+        // The v4 running-max freeze costs accuracy once a Q block spans
+        // several KV stacks; single-stack shapes keep the cheaper path.
+        const bool exactMaxNeeded = (embed > NUM_256) && (maxKvSeqlen > MAX_KV_STACK_LEN);
+        const float rescaleThreshold = exactMaxNeeded ? 0.0f : 4.0f;
+        epilogueOnlineSoftmax.init(resource, scaleValue, softcapValue, rescaleThreshold);
         epilogueRescaleO.init(resource);
 
         coreIdx = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
