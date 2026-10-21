@@ -184,6 +184,72 @@ def _paged_kv_for_batch(
     return torch.stack(key_blocks, dim=0), torch.stack(value_blocks, dim=0)
 
 
+@pytest.mark.parametrize("data_type", [torch.float16, torch.bfloat16])
+def test_d512_append_kv_metadata_matches_direct(data_type):
+    if not _is_ascend910():
+        pytest.skip("D=512 append-KV metadata test requires Ascend910")
+
+    torch.manual_seed(2026)
+    batch_size = 1
+    q_seqlen = 8
+    old_len = 512
+    new_len = 256
+    num_heads = 16
+    kv_heads = 2
+    head_size = 512
+    block_size = 128
+    max_blocks = (old_len + new_len) // block_size
+
+    q = _rand_npu((q_seqlen, num_heads, head_size), data_type, WIDE_RANGE)
+    cu_seqlens_q = _int32_npu([0, q_seqlen])
+    cache_seqlens = _int32_npu([old_len])
+    page_table = torch.arange(max_blocks, dtype=torch.int32).reshape(1, max_blocks).npu()
+    key_cache = _rand_npu((max_blocks, block_size, kv_heads, head_size), data_type, WIDE_RANGE)
+    value_cache = _rand_npu((max_blocks, block_size, kv_heads, head_size), data_type, WIDE_RANGE)
+    k_new = _rand_npu((batch_size, new_len, kv_heads, head_size), data_type, WIDE_RANGE)
+    v_new = _rand_npu((batch_size, new_len, kv_heads, head_size), data_type, WIDE_RANGE)
+
+    metadata = _metadata(
+        batch_size=batch_size,
+        q_seqlen=q_seqlen,
+        kv_seqlen=old_len + new_len,
+        num_heads=num_heads,
+        kv_heads=kv_heads,
+        head_size=head_size,
+        data_type=data_type,
+        cache_seqlens=cache_seqlens,
+        cu_seqlens_q=cu_seqlens_q,
+        page_size=block_size,
+        is_causal=True,
+        max_seqlen_k_new=new_len,
+    )
+
+    outputs = []
+    caches = []
+    for scheduler_metadata in (None, metadata):
+        key_cache_run = key_cache.clone()
+        value_cache_run = value_cache.clone()
+        out = flash_attn_with_kvcache(
+            q,
+            key_cache_run,
+            value_cache_run,
+            k=k_new,
+            v=v_new,
+            cache_seqlens=cache_seqlens,
+            page_table=page_table,
+            cu_seqlens_q=cu_seqlens_q,
+            max_seqlen_q=q_seqlen,
+            causal=True,
+            scheduler_metadata=scheduler_metadata,
+        )
+        outputs.append(out)
+        caches.append((key_cache_run, value_cache_run))
+
+    assert torch.equal(outputs[0], outputs[1])
+    assert torch.equal(caches[0][0], caches[1][0])
+    assert torch.equal(caches[0][1], caches[1][1])
+
+
 def _assert_bsnd_matches_ref(
     output_npu,
     softmax_lse_npu,
@@ -273,6 +339,9 @@ FLASH_ATTN_VARLEN_CASES = [
     (torch.bfloat16, 5, 4, 4, 512, 512, 128, True),
     (torch.float16, 7, 5, 1, 777, 888, 192, False),
     (torch.bfloat16, 1, 1, 1, 7777, 8192, 64, True),
+    # D=512 dense varlen-KV uses cu_seqlens_k, matching the supported <=256 path.
+    (torch.float16, 1, 8, 2, 16, 1024, 512, True),
+    (torch.bfloat16, 1, 8, 2, 16, 1024, 512, False),
 ]
 
 

@@ -269,9 +269,16 @@ test_cases = [
     (torch.bfloat16, 2, 8, 8, 8, 1024, 512, 1, 128, True, "TND", False, -1, -1, 0.0, 1, False),
     # head_dim 512 bidirectional (no causal mask) with a wider GQA group.
     (torch.bfloat16, 1, 32, 4, 32, 1024, 512, 1, 128, False, "TND", False, -1, -1, 0.0, 1, False),
-    # head_dim 512 must be skipped off the supported shape (BSND / append-KV).
+    # head_dim 512 dense BSND and append-KV cache update.
     (torch.bfloat16, 2, 8, 8, 64, 256, 512, 0, 128, True, "BSND", False, -1, -1, 0.0, 0, False),
     (torch.bfloat16, 1, 32, 8, 1, 2048, 512, 1, 128, True, "TND", False, -1, -1, 0.0, 0, True),
+    (torch.bfloat16, 2, 8, 8, 16, 1024, 512, 0, 128, True, "BSND", False, -1, -1, 0.0, 0, True),
+    (torch.float16, 1, 16, 2, 1, 1024, 512, 1, 128, True, "TND", False, -1, -1, 0.0, 0, True),
+    (torch.float16, 2, 4, 4, 8, 1024, 512, 0, 128, True, "BSND", False, -1, -1, 0.0, 0, True),
+    (torch.bfloat16, 1, 8, 8, 512, 2048, 512, 1, 128, True, "TND", False, -1, -1, 0.0, 0, True),
+    (torch.float16, 1, 8, 8, 512, 2048, 512, 0, 128, True, "BSND", False, -1, -1, 0.0, 0, True),
+    (torch.bfloat16, 1, 16, 2, 1, 1024, 512, 0, 128, True, "TND", False, -1, -1, 0.0, 0, True),
+    (torch.bfloat16, 2, 8, 8, 16, 1024, 512, 1, 128, True, "BSND", False, -1, -1, 0.0, 0, True),
     # head_dim <=256 controls for the same shapes (regression guard).
     (torch.float16, 1, 32, 8, 1, 2048, 256, 1, 128, True, "TND", False, -1, -1, 0.0, 4, False),
     (torch.bfloat16, 1, 16, 2, 64, 2048, 256, 1, 128, True, "TND", False, -1, -1, 0.0, 2, False),
@@ -305,17 +312,12 @@ def test_fa_kvcache_ops(
     if num_splits > 1 and not (cache_mode == 1 and layout == "TND"):
         pytest.skip("num_splits>1 requires paged KV cache and TND (varlen-q) layout")
     if head_size > 256:
-        # head_dim 512 is enabled only for the SplitFuse production shape:
-        # TND (varlen-q) + paged KV cache + FP16/BF16 + no append-KV, and only
-        # on the Ascend910 path (the Ascend950 v3 kernel caps head dim at 256).
+        # head_dim 512 follows the same TND/BSND and paged/dense routing matrix
+        # as the original <=256 path, but append-KV remains unsupported.
         if head_size != 512:
             pytest.skip("head_size > 256 is only supported for exactly 512")
         if "Ascend950" in name:
             pytest.skip("Ascend950 v3 does not support head_size 512")
-        if not (cache_mode == 1 and layout == "TND"):
-            pytest.skip("head_size 512 requires paged KV cache and TND (varlen-q) layout")
-        if new_kv:
-            pytest.skip("head_size 512 does not support append-KV")
     elif head_size < 1:
         pytest.skip("head_size must be >= 1")
     if is_varied and layout != "TND":
