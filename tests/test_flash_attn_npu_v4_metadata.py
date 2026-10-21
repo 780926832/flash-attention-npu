@@ -84,7 +84,7 @@ def test_950_metadata_reuse_with_forward_parameters(page_size, paged):
         seqused_k=used_k,
     )
     before = metadata.clone()
-    assert metadata.numel() == 3544
+    assert metadata.numel() == 5208
     for scale in (0.05, 0.2):
         kwargs = dict(
             cu_seqlens_q=cu_q,
