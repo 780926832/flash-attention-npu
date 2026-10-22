@@ -698,9 +698,6 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
         # Precompute the scheduler metadata, including FlashDecode schedules
         # when eligible, on the AICPU so the forward launch needs no
         # device->host->device round trip.
-        batch_size = (
-            cu_seqlens_q.numel() - 1 if cu_seqlens_q is not None else q.shape[0]
-        )
         kv_seqlens = seqused_k
         if kv_seqlens is None and cu_seqlens_k is not None:
             kv_seqlens = cu_seqlens_k[1:] - cu_seqlens_k[:-1]
@@ -766,8 +763,17 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
             scheduler_metadata,
         )
 
-        ctx.save_for_backward(q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k,
-                              _full_contiguous(seqused_q), _full_contiguous(seqused_k))
+        ctx.save_for_backward(
+            q,
+            k,
+            v,
+            out,
+            softmax_lse,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            _full_contiguous(seqused_q),
+            _full_contiguous(seqused_k),
+        )
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
         ctx.softmax_scale = softmax_scale
@@ -794,7 +800,9 @@ class FlashAttnVarlenFunc(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k = ctx.saved_tensors
+        q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, seqused_q, seqused_k = (
+            ctx.saved_tensors
+        )
         dlse = args[0] if ctx.return_lse and len(args) > 0 else None
         if dlse is not None and torch.is_tensor(dlse) and float(dlse.detach().abs().sum()) == 0.0:
             dlse = None
